@@ -1,6 +1,7 @@
 package expo.modules.arianative
 
 import android.content.Context
+import android.content.Intent
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import okhttp3.MediaType.Companion.toMediaType
@@ -42,6 +43,18 @@ class AriaNativeModule : Module() {
 
     AsyncFunction("registerDevice") { serverUrl: String, token: String ->
       registerDeviceBlocking(serverUrl, token)
+    }
+
+    AsyncFunction("openCallScreen") {
+      val context = appContext.reactContext
+        ?: throw IllegalStateException("No Android context available")
+      // Class.forName rather than a direct import: InCallActivity lives in
+      // the app module (com.aria.companion, injected by the withAriaNative
+      // config plugin), and :app depends on this module, not the reverse --
+      // so it can't be referenced at compile time from here.
+      val intent = Intent(context, Class.forName("com.aria.companion.InCallActivity"))
+      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      context.startActivity(intent)
     }
   }
 

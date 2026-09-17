@@ -10,33 +10,63 @@ import android.webkit.WebChromeClient
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 
-/** Just wraps the existing, already-tested browser call UI (call.html)
- * in a WebView -- everything about the actual call (client-side VAD,
- * WebSocket audio streaming, barge-in) is the same code already verified
- * working, this only adds the native "answered from a real incoming call"
- * wrapper around it. */
+/** Wraps the existing browser call UI (call.html) in a WebView.
+ *
+ * Critical ordering detail: the page is only loaded AFTER the OS-level
+ * RECORD_AUDIO permission is actually resolved. Loading it first (which
+ * an earlier version did) meant getUserMedia ran while the permission
+ * dialog was still pending -- and in a WebView that doesn't throw, it
+ * hands back a SILENT stream, so speech was never detected and no error
+ * ever surfaced. Granting the WebView-level permission via
+ * onPermissionRequest is not enough on its own; the app itself needs the
+ * OS permission too. */
 class InCallActivity : AppCompatActivity() {
+
+    companion object {
+        private const val MIC_PERMISSION_REQUEST = 2
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_in_call)
+        configureWebView()
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
-            != PackageManager.PERMISSION_GRANTED
+            == PackageManager.PERMISSION_GRANTED
         ) {
-            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), 2)
+            loadCallPage()
+        } else {
+            ActivityCompat.requestPermissions(
+                this, arrayOf(Manifest.permission.RECORD_AUDIO), MIC_PERMISSION_REQUEST
+            )
         }
+    }
 
-        val serverUrl = ServerConfig.get(this)
-        if (serverUrl.isNullOrBlank()) {
-            finish()
-            return
+    override fun onRequestPermissionsResult(
+        requestCode: Int, permissions: Array<out String>, grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != MIC_PERMISSION_REQUEST) return
+        val granted = grantResults.isNotEmpty() &&
+            grantResults[0] == PackageManager.PERMISSION_GRANTED
+        if (!granted) {
+            Toast.makeText(
+                this,
+                "Mic permission denied -- she won't be able to hear you.",
+                Toast.LENGTH_LONG
+            ).show()
         }
+        // Load either way: if denied, the page's own error handling shows
+        // what's wrong on screen rather than just sitting there silent.
+        loadCallPage()
+    }
 
+    private fun configureWebView() {
         val webView = findViewById<WebView>(R.id.callWebView)
         webView.settings.apply {
             javaScriptEnabled = true
@@ -49,7 +79,7 @@ class InCallActivity : AppCompatActivity() {
             override fun onPermissionRequest(request: PermissionRequest) {
                 // The page only ever asks for the mic (getUserMedia audio) --
                 // grant exactly what it asks for, nothing more.
-                request.grant(request.resources)
+                runOnUiThread { request.grant(request.resources) }
             }
         }
 
@@ -63,11 +93,20 @@ class InCallActivity : AppCompatActivity() {
                 handler.proceed()
             }
         }
+    }
 
+    private fun loadCallPage() {
+        val serverUrl = ServerConfig.get(this)
+        if (serverUrl.isNullOrBlank()) {
+            Toast.makeText(this, "No server URL saved -- open the app and register first.",
+                Toast.LENGTH_LONG).show()
+            finish()
+            return
+        }
         // Tells call.html to skip the idle "Call her" screen and jump
         // straight into the call -- you already accepted natively, making
         // you tap it again on the page would be redundant/confusing.
-        webView.loadUrl("$serverUrl/?autoanswer=1")
+        findViewById<WebView>(R.id.callWebView).loadUrl("$serverUrl/?autoanswer=1")
     }
 
     override fun onBackPressed() {

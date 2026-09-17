@@ -63,6 +63,22 @@ export default function App() {
     }
   }
 
+  async function handleCallHer() {
+    const url = serverUrl.trim().replace(/\/+$/, '');
+    if (!url) {
+      setStatus('Enter and save the server URL first.');
+      return;
+    }
+    try {
+      // Save first, so the native call screen (which reads the URL from
+      // SharedPreferences, not from this JS state) always has the current one.
+      await AriaNative.saveServerUrl(url);
+      await AriaNative.openCallScreen();
+    } catch (err: any) {
+      setStatus(`Couldn't open the call screen: ${err?.message ?? err}`);
+    }
+  }
+
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Aria Companion</Text>
@@ -76,6 +92,8 @@ export default function App() {
         onChangeText={setServerUrl}
       />
       <Button title="Save and register" onPress={handleRegister} />
+      <View style={styles.spacer} />
+      <Button title="📞 Call her now" color="#7b5fe0" onPress={handleCallHer} />
       {!!status && <Text style={styles.status}>{status}</Text>}
     </View>
   );
@@ -92,5 +110,6 @@ const styles = StyleSheet.create({
     padding: 12,
     marginBottom: 16,
   },
+  spacer: { height: 12 },
   status: { marginTop: 16, textAlign: 'center' },
 });
