@@ -64,7 +64,10 @@ class InCallActivity : AppCompatActivity() {
             }
         }
 
-        webView.loadUrl(serverUrl)
+        // Tells call.html to skip the idle "Call her" screen and jump
+        // straight into the call -- you already accepted natively, making
+        // you tap it again on the page would be redundant/confusing.
+        webView.loadUrl("$serverUrl/?autoanswer=1")
     }
 
     override fun onBackPressed() {
