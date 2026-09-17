@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android", "web"],
+  "apple": {
+    "modules": ["AriaNativeModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.arianative.AriaNativeModule"]
+  }
+}
