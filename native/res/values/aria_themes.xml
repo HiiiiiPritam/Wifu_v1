@@ -1,5 +1,5 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <!-- Self-contained (doesn't depend on the RN-generated app theme) --
+    <!-- Self-contained (doesn't depend on the RN-generated app theme),
          used only by IncomingCallActivity and InCallActivity. -->
     <style name="Theme.AriaCompanion.Call" parent="Theme.MaterialComponents.DayNight.NoActionBar">
         <item name="android:windowFullscreen">true</item>
