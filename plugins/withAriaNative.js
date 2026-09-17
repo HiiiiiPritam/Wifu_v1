@@ -11,7 +11,7 @@
  * setup screen. See ../native/README (if present) or project-overview
  * memory for the full reasoning.
  */
-const { withDangerousMod, withAndroidManifest } = require('@expo/config-plugins');
+const { withDangerousMod, withAndroidManifest, withAppBuildGradle } = require('@expo/config-plugins');
 const fs = require('fs');
 const path = require('path');
 
@@ -100,8 +100,29 @@ const withAriaManifest = (config) =>
     return config;
   });
 
+// google-services.json only feeds the google-services Gradle plugin's
+// config parsing -- it does NOT add the actual Firebase Messaging library
+// to the app module, which AriaMessagingService.kt needs to compile at
+// all. Same story for OkHttp (TrustAllCerts.kt / AriaMessagingService's
+// onNewToken) -- neither dependency exists in Expo's generated
+// app/build.gradle by default.
+const withAriaAppDependencies = (config) =>
+  withAppBuildGradle(config, (config) => {
+    if (!config.modResults.contents.includes('firebase-messaging')) {
+      config.modResults.contents = config.modResults.contents.replace(
+        /dependencies\s*\{/,
+        `dependencies {
+    implementation(platform("com.google.firebase:firebase-bom:33.1.2"))
+    implementation("com.google.firebase:firebase-messaging-ktx")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")`
+      );
+    }
+    return config;
+  });
+
 module.exports = function withAriaNative(config) {
   config = withAriaNativeFiles(config);
   config = withAriaManifest(config);
+  config = withAriaAppDependencies(config);
   return config;
 };
