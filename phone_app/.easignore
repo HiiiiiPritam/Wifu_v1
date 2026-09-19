@@ -1,0 +1,16 @@
+# EAS Build re-installs dependencies from package.json in the cloud --
+# uploading the local node_modules is pure waste (it's what blew the
+# upload to 265MB and likely caused the connection reset on a slow
+# upload). This isn't a git repo, so EAS had no .gitignore to infer
+# exclusions from without this file.
+node_modules/
+
+# generated native folders (expo prebuild regenerates these; EAS runs
+# prebuild itself as part of the build, we don't want stale local copies
+# uploaded and used instead)
+/android
+/ios
+
+.expo/
+*.tsbuildinfo
+.git/
