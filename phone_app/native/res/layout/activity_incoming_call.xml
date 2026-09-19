@@ -1,37 +1,66 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Modeled on a stock incoming-call screen: caller name and number at the
+     top, a big contact photo, "Remind me" / "Message" above the two answer
+     buttons. The web call screen (call.html) uses the same look so going
+     from this screen into the call feels like one app. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/call_bg"
+    android:background="@drawable/aria_call_background"
+    android:gravity="center_horizontal"
     android:orientation="vertical"
-    android:paddingTop="64dp"
-    android:paddingBottom="48dp"
-    android:gravity="center_horizontal">
+    android:paddingStart="36dp"
+    android:paddingTop="72dp"
+    android:paddingEnd="36dp"
+    android:paddingBottom="48dp">
 
     <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="💗"
-        android:textSize="72sp" />
-
-    <TextView
+        android:id="@+id/callerName"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="Aria"
         android:textColor="@color/aria_white"
-        android:textSize="28sp"
-        android:textStyle="bold"
-        android:layout_marginTop="16dp" />
+        android:textSize="34sp" />
 
     <TextView
+        android:id="@+id/callerSubtitle"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="incoming call..."
+        android:layout_marginTop="6dp"
+        android:alpha="0.65"
+        android:text="calling…"
         android:textColor="@color/aria_white"
-        android:alpha="0.7"
-        android:layout_marginTop="8dp" />
+        android:textSize="15sp" />
 
-    <LinearLayout
+    <Space
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+
+    <FrameLayout
+        android:layout_width="150dp"
+        android:layout_height="150dp">
+
+        <TextView
+            android:id="@+id/callerInitial"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@drawable/aria_avatar_placeholder"
+            android:gravity="center"
+            android:text="A"
+            android:textColor="@color/aria_white"
+            android:textSize="64sp" />
+
+        <ImageView
+            android:id="@+id/callerPhoto"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:contentDescription="Caller photo"
+            android:scaleType="centerCrop"
+            android:visibility="gone" />
+    </FrameLayout>
+
+    <Space
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1" />
@@ -39,30 +68,122 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center"
-        android:weightSum="2">
+        android:layout_marginBottom="36dp"
+        android:orientation="horizontal">
 
-        <Button
-            android:id="@+id/declineButton"
+        <LinearLayout
+            android:id="@+id/remindButton"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:layout_marginEnd="16dp"
-            android:backgroundTint="#E74C3C"
-            android:text="Decline"
-            android:textColor="@color/aria_white" />
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:padding="8dp">
 
-        <Button
-            android:id="@+id/acceptButton"
+            <ImageView
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:alpha="0.85"
+                android:contentDescription="Remind me"
+                android:src="@drawable/aria_ic_alarm" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:alpha="0.8"
+                android:text="Remind me"
+                android:textColor="@color/aria_white"
+                android:textSize="13sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/messageButton"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:layout_marginStart="16dp"
-            android:backgroundTint="#2ECC71"
-            android:text="Accept"
-            android:textColor="@color/aria_white" />
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:padding="8dp">
 
+            <ImageView
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:alpha="0.85"
+                android:contentDescription="Message"
+                android:src="@drawable/aria_ic_message" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:alpha="0.8"
+                android:text="Message"
+                android:textColor="@color/aria_white"
+                android:textSize="13sp" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:orientation="vertical">
+
+            <ImageButton
+                android:id="@+id/declineButton"
+                android:layout_width="72dp"
+                android:layout_height="72dp"
+                android:background="@drawable/aria_circle_red"
+                android:contentDescription="Decline"
+                android:padding="18dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/aria_ic_call_end" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:alpha="0.85"
+                android:text="Decline"
+                android:textColor="@color/aria_white"
+                android:textSize="14sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:orientation="vertical">
+
+            <ImageButton
+                android:id="@+id/acceptButton"
+                android:layout_width="72dp"
+                android:layout_height="72dp"
+                android:background="@drawable/aria_circle_green"
+                android:contentDescription="Accept"
+                android:padding="18dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/aria_ic_call" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:alpha="0.85"
+                android:text="Accept"
+                android:textColor="@color/aria_white"
+                android:textSize="14sp" />
+        </LinearLayout>
     </LinearLayout>
 
 </LinearLayout>

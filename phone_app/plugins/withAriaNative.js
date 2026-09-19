@@ -50,6 +50,10 @@ const withAriaNativeFiles = (config) =>
         path.join(nativeSrc, 'res', 'values'),
         path.join(androidRoot, 'app', 'src', 'main', 'res', 'values')
       );
+      copyDir(
+        path.join(nativeSrc, 'res', 'drawable'),
+        path.join(androidRoot, 'app', 'src', 'main', 'res', 'drawable')
+      );
 
       return config;
     },
@@ -64,7 +68,8 @@ const withAriaManifest = (config) =>
         $: {
           'android:name': '.IncomingCallActivity',
           'android:exported': 'false',
-          'android:showOnLockScreen': 'true',
+          'android:showWhenLocked': 'true',
+          'android:turnScreenOn': 'true',
           'android:excludeFromRecents': 'true',
           'android:launchMode': 'singleInstance',
           'android:theme': '@style/Theme.AriaCompanion.Call',
@@ -74,7 +79,8 @@ const withAriaManifest = (config) =>
         $: {
           'android:name': '.InCallActivity',
           'android:exported': 'false',
-          'android:showOnLockScreen': 'true',
+          'android:showWhenLocked': 'true',
+          'android:turnScreenOn': 'true',
           'android:launchMode': 'singleInstance',
           'android:theme': '@style/Theme.AriaCompanion.Call',
         },
@@ -95,6 +101,26 @@ const withAriaManifest = (config) =>
     app.service = app.service || [];
     if (!app.service.some((s) => s.$['android:name'] === '.AriaMessagingService')) {
       app.service.push(service);
+    }
+
+    // The foregroundServiceType is the whole point of this entry -- without
+    // it declared here, startForeground(..., FOREGROUND_SERVICE_TYPE_MICROPHONE)
+    // throws at runtime and the mic stays blocked.
+    const callService = {
+      $: {
+        'android:name': '.CallForegroundService',
+        'android:exported': 'false',
+        'android:foregroundServiceType': 'microphone',
+      },
+    };
+    if (!app.service.some((s) => s.$['android:name'] === '.CallForegroundService')) {
+      app.service.push(callService);
+    }
+
+    // The call notification's Decline button (see CallActionReceiver.kt).
+    app.receiver = app.receiver || [];
+    if (!app.receiver.some((r) => r.$['android:name'] === '.CallActionReceiver')) {
+      app.receiver.push({ $: { 'android:name': '.CallActionReceiver', 'android:exported': 'false' } });
     }
 
     return config;

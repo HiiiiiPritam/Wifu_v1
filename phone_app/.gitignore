@@ -43,3 +43,6 @@ yarn-error.*
 # Firebase config (personal, not a secret exactly, but project-specific)
 google-services.json
 build_view*.json
+
+# Local Gradle caches (never part of the build upload)
+.gradle/

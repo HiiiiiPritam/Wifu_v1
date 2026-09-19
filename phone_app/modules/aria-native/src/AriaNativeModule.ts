@@ -11,6 +11,19 @@ declare class AriaNativeModule extends NativeModule<{}> {
   /** Opens the native in-call screen (which auto-starts a call), so you
    * can ring her yourself instead of only ever receiving. */
   openCallScreen(): Promise<void>;
+  /** GET /settings -- the server's current settings, as a JSON string. */
+  getSettings(serverUrl: string): Promise<string>;
+  /** POST /settings with a JSON string (partial updates are fine). Returns
+   * the saved settings as the server validated/clamped them. */
+  saveSettings(serverUrl: string, json: string): Promise<string>;
+  /** Any other server call; body is a JSON string, or '' for none. */
+  request(serverUrl: string, method: string, path: string, body: string): Promise<string>;
+  /** Saves her photo on the phone and uploads it to the server. */
+  uploadAvatar(serverUrl: string, base64: string): Promise<string>;
+  /** Refreshes the phone's copy of her photo; true if one exists. */
+  cacheAvatar(serverUrl: string): Promise<boolean>;
+  /** file:// URI of the phone's copy of her photo, or null. */
+  avatarUri(): Promise<string | null>;
 }
 
 export default requireNativeModule<AriaNativeModule>('AriaNative');
