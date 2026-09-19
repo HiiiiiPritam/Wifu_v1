@@ -1,0 +1,19 @@
+# Secrets
+.env
+*firebase*adminsdk*.json
+.certs/
+vts_token.txt
+device_token.json
+
+# Personal data -- what she knows about you, your calls, your setup
+memory.json
+settings.json
+schedule.json
+avatar.img
+call_logs/
+
+# Generated
+venv/
+__pycache__/
+*.pyc
+.audio_cache/

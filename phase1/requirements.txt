@@ -1,0 +1,15 @@
+faster-whisper==1.0.3
+requests
+groq>=1.7.0
+python-dotenv==1.0.1
+sounddevice==0.4.7
+numpy==1.26.4
+soundfile==0.12.1
+edge-tts==7.2.8
+webrtcvad-wheels==2.0.14
+pyvts==0.3.0
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+cryptography==44.0.0
+firebase-admin==6.5.0
+psutil==7.2.2

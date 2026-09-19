@@ -1,0 +1,987 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Aria</title>
+<style>
+  /* Modeled on a stock phone dialer: dark gradient, contact photo, a 3x2
+     grid of round controls, red end button. Nothing here should look like
+     an app -- it should look like a phone call. */
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: #1c1b29;
+    color: #fff;
+    font-family: 'Google Sans', Roboto, -apple-system, 'Segoe UI', sans-serif;
+    overflow: hidden;
+    user-select: none;
+  }
+  .screen {
+    position: fixed; inset: 0;
+    display: flex; flex-direction: column; align-items: center;
+    padding: max(56px, env(safe-area-inset-top)) 28px max(40px, env(safe-area-inset-bottom));
+    background: linear-gradient(180deg, #2a2840 0%, #1c1b29 55%, #141320 100%);
+  }
+  .screen[hidden] { display: none !important; }
+
+  .avatar {
+    width: 112px; height: 112px; border-radius: 50%;
+    background: linear-gradient(135deg, #9d8cff, #d67bc4);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 48px; font-weight: 500; color: #fff;
+    overflow: hidden; flex-shrink: 0;
+    box-shadow: 0 0 0 0 rgba(255,255,255,0);
+    transition: box-shadow 0.25s;
+  }
+  .avatar img { width: 100%; height: 100%; object-fit: cover; }
+  .avatar.large { width: 150px; height: 150px; font-size: 64px; }
+  /* A soft ring while she's talking, like a speaker indicator. */
+  .avatar.talking { animation: talk 1.2s ease-in-out infinite; }
+  @keyframes talk {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(157,140,255,0.55); }
+    50% { box-shadow: 0 0 0 14px rgba(157,140,255,0); }
+  }
+  .ringing-avatar { animation: ring 1.6s ease-out infinite; }
+  @keyframes ring {
+    0% { box-shadow: 0 0 0 0 rgba(255,255,255,0.35); }
+    100% { box-shadow: 0 0 0 36px rgba(255,255,255,0); }
+  }
+
+  .name { font-size: 30px; font-weight: 400; margin-top: 18px; text-align: center; }
+  .sub { font-size: 15px; color: rgba(255,255,255,0.65); margin-top: 6px; min-height: 20px; text-align: center; }
+  .spacer { flex: 1; }
+
+  /* ---- incoming (browser only; the app uses its native screen) ---- */
+  .ring-top { text-align: center; margin-top: 12px; }
+  .ring-top .name { margin-top: 0; font-size: 34px; }
+  .quick-actions { display: flex; justify-content: space-between; width: 100%; max-width: 300px; margin-bottom: 36px; }
+  .quick { background: none; border: none; color: rgba(255,255,255,0.8); display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 13px; font-family: inherit; }
+  .quick svg { width: 22px; height: 22px; fill: currentColor; }
+  .answer-row { display: flex; justify-content: space-between; width: 100%; max-width: 300px; }
+  .round { display: flex; flex-direction: column; align-items: center; gap: 10px; font-size: 14px; color: rgba(255,255,255,0.85); }
+  .round button { width: 68px; height: 68px; border-radius: 50%; border: none; display: flex; align-items: center; justify-content: center; }
+  .round button svg { width: 30px; height: 30px; fill: #fff; }
+  .round button:active { transform: scale(0.94); }
+  .red { background: #e5453b; }
+  .green { background: #2fb350; }
+
+  /* ---- in call ---- */
+  .incall-top { display: flex; flex-direction: column; align-items: center; margin-top: 8px; }
+  .timer { font-size: 15px; color: rgba(255,255,255,0.7); margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .badge { font-size: 13px; color: #ffcf6e; margin-top: 6px; min-height: 18px; }
+
+  .captions {
+    width: 100%; max-width: 440px; flex: 1; overflow-y: auto; margin: 16px 0 8px;
+    font-size: 15px; line-height: 1.45; text-align: left;
+    mask-image: linear-gradient(to bottom, transparent 0, #000 24px);
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 24px);
+    padding-top: 20px;
+  }
+  .captions p { margin: 6px 0; }
+  .captions .you { color: rgba(255,255,255,0.6); }
+  .captions .her { color: #fff; }
+  .captions pre { font-size: 11px; white-space: pre-wrap; opacity: 0.7; }
+
+  .controls {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px 12px;
+    width: 100%; max-width: 330px; margin-bottom: 34px;
+  }
+  .ctl { background: none; border: none; color: #fff; display: flex; flex-direction: column; align-items: center; gap: 8px; font-family: inherit; font-size: 13px; padding: 0; }
+  .ctl .disc { width: 62px; height: 62px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: rgba(255,255,255,0.08); transition: background 0.15s; }
+  .ctl svg { width: 27px; height: 27px; fill: #fff; }
+  .ctl span.label { color: rgba(255,255,255,0.75); }
+  .ctl.on .disc { background: #fff; }
+  .ctl.on svg { fill: #1c1b29; }
+  .ctl[disabled] { opacity: 0.35; }
+  .ctl:active .disc { transform: scale(0.94); }
+
+  .end { width: 70px; height: 70px; border-radius: 50%; border: none; background: #e5453b; display: flex; align-items: center; justify-content: center; }
+  .end svg { width: 32px; height: 32px; fill: #fff; }
+
+  .mic-info { font-size: 11px; color: rgba(255,255,255,0.45); margin-top: 10px; min-height: 14px; text-align: center; }
+
+  /* ---- keypad overlay ---- */
+  .keypad { position: fixed; inset: 0; background: rgba(20,19,32,0.97); display: flex; flex-direction: column; align-items: center; justify-content: flex-end; padding: 0 28px 40px; }
+  .keypad[hidden] { display: none; }
+  .digits { font-size: 32px; letter-spacing: 2px; min-height: 44px; margin-bottom: 20px; }
+  .keys { display: grid; grid-template-columns: repeat(3, 74px); gap: 16px 28px; margin-bottom: 26px; }
+  .key { width: 74px; height: 74px; border-radius: 50%; border: none; background: rgba(255,255,255,0.09); color: #fff; font-size: 30px; font-family: inherit; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1; }
+  .key small { font-size: 10px; letter-spacing: 1.5px; color: rgba(255,255,255,0.55); margin-top: 3px; }
+  .key:active { background: rgba(255,255,255,0.22); }
+  .hide-keypad { background: none; border: none; color: rgba(255,255,255,0.8); font-size: 15px; margin-top: 18px; font-family: inherit; }
+
+  /* ---- idle (browser only) ---- */
+  .call-btn { background: #2fb350; color: #fff; border: none; border-radius: 30px; height: 54px; padding: 0 34px; font-size: 17px; font-family: inherit; display: flex; align-items: center; gap: 10px; }
+  .call-btn svg { width: 22px; height: 22px; fill: #fff; }
+</style>
+</head>
+<body>
+
+<!-- Material icons (Apache 2.0), referenced by id below. -->
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="i-call" viewBox="0 0 24 24"><path d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z"/></symbol>
+  <symbol id="i-end" viewBox="0 0 24 24"><path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08c-.18-.17-.29-.42-.29-.7 0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28-.79-.74-1.69-1.36-2.67-1.85-.33-.16-.56-.5-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z"/></symbol>
+  <symbol id="i-mic-off" viewBox="0 0 24 24"><path d="M19 11h-1.7c0 .74-.16 1.43-.43 2.05l1.23 1.23c.56-.98.9-2.09.9-3.28zm-4.02.17c0-.06.02-.11.02-.17V5c0-1.66-1.34-3-3-3S9 3.34 9 5v.18l5.98 5.99zM4.27 3L3 4.27l6.01 6.01V11c0 1.66 1.33 3 2.99 3 .22 0 .44-.03.65-.08l1.66 1.66c-.71.33-1.5.52-2.31.52-2.76 0-5.3-2.1-5.3-5.1H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c.91-.13 1.77-.45 2.54-.9L19.73 21 21 19.73 4.27 3z"/></symbol>
+  <symbol id="i-dialpad" viewBox="0 0 24 24"><path d="M12 19c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zM6 1c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm12-8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm-6 8c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm6 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0-6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm-6 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0-6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></symbol>
+  <symbol id="i-speaker" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></symbol>
+  <symbol id="i-hold" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></symbol>
+  <symbol id="i-cc" viewBox="0 0 24 24"><path d="M19 4H5c-1.11 0-2 .9-2 2v12c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm-8 7H9.5v-.5h-2v3h2V13H11v1c0 .55-.45 1-1 1H7c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1zm7 0h-1.5v-.5h-2v3h2V13H18v1c0 .55-.45 1-1 1h-3c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1z"/></symbol>
+  <symbol id="i-add" viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></symbol>
+  <symbol id="i-alarm" viewBox="0 0 24 24"><path d="M22 5.72l-4.6-3.86-1.29 1.53 4.6 3.86L22 5.72zM7.88 3.39L6.6 1.86 2 5.71l1.29 1.53 4.59-3.85zM12.5 8H11v6l4.75 2.85.75-1.23-4-2.37V8zM12 4c-4.97 0-9 4.03-9 9s4.02 9 9 9c4.97 0 9-4.03 9-9s-4.03-9-9-9zm0 16c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7z"/></symbol>
+  <symbol id="i-message" viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 9h12v2H6V9zm8 5H6v-2h8v2zm4-6H6V6h12v2z"/></symbol>
+</svg>
+
+<!-- Browser only: the app never shows this (it opens straight into a call). -->
+<div id="idle" class="screen">
+  <div class="spacer"></div>
+  <div class="avatar large her-avatar"></div>
+  <div class="name her-name">Aria</div>
+  <div id="idleStatus" class="sub">connecting...</div>
+  <div class="spacer"></div>
+  <button class="call-btn" onclick="callHerNow()"><svg><use href="#i-call"/></svg><span>Call</span></button>
+</div>
+
+<!-- Browser only: the app shows its own native incoming-call screen. -->
+<div id="ringing" class="screen" hidden>
+  <div class="ring-top">
+    <div class="name her-name">Aria</div>
+    <div id="ringSub" class="sub">calling…</div>
+  </div>
+  <div class="spacer"></div>
+  <div class="avatar large her-avatar ringing-avatar"></div>
+  <div class="spacer"></div>
+  <div class="quick-actions">
+    <button class="quick" onclick="ringAction('remind')"><svg><use href="#i-alarm"/></svg>Remind me</button>
+    <button class="quick" onclick="ringAction('busy')"><svg><use href="#i-message"/></svg>Message</button>
+  </div>
+  <div class="answer-row">
+    <div class="round"><button class="red" onclick="declineCall()"><svg><use href="#i-end"/></svg></button>Decline</div>
+    <div class="round"><button class="green" onclick="answerCall()"><svg><use href="#i-call"/></svg></button>Accept</div>
+  </div>
+</div>
+
+<div id="incall" class="screen" hidden>
+  <div class="incall-top">
+    <div id="callAvatar" class="avatar her-avatar"></div>
+    <div class="name her-name">Aria</div>
+    <div id="timer" class="timer">00:00</div>
+    <div id="badge" class="badge"></div>
+  </div>
+  <div id="transcript" class="captions" hidden></div>
+  <div class="spacer" id="captionsSpacer"></div>
+  <div class="controls">
+    <button class="ctl" id="btnMute" onclick="toggleMute()"><div class="disc"><svg><use href="#i-mic-off"/></svg></div><span class="label">Mute</span></button>
+    <button class="ctl" id="btnKeypad" onclick="openKeypad()"><div class="disc"><svg><use href="#i-dialpad"/></svg></div><span class="label">Keypad</span></button>
+    <button class="ctl" id="btnSpeaker" onclick="toggleSpeaker()"><div class="disc"><svg><use href="#i-speaker"/></svg></div><span class="label">Speaker</span></button>
+    <button class="ctl" id="btnHold" onclick="toggleHold()"><div class="disc"><svg><use href="#i-hold"/></svg></div><span class="label">Hold</span></button>
+    <button class="ctl" id="btnCaptions" onclick="toggleCaptions()"><div class="disc"><svg><use href="#i-cc"/></svg></div><span class="label">Captions</span></button>
+    <button class="ctl" disabled><div class="disc"><svg><use href="#i-add"/></svg></div><span class="label">Add call</span></button>
+  </div>
+  <button class="end" onclick="hangUp()"><svg><use href="#i-end"/></svg></button>
+  <div id="micLevel" class="mic-info"></div>
+  <div id="incallStatus" class="mic-info"></div>
+</div>
+
+<div id="keypad" class="keypad" hidden>
+  <div id="digits" class="digits"></div>
+  <div class="keys" id="keys"></div>
+  <button class="end" onclick="hangUp()"><svg><use href="#i-end"/></svg></button>
+  <button class="hide-keypad" onclick="closeKeypad()">Hide keypad</button>
+</div>
+
+<script>
+// Both overwritten from the server's settings (mic_threshold,
+// end_of_speech_ms) as soon as the page loads -- these are only fallbacks.
+let SPEECH_RMS_THRESHOLD = 14;  // raise if background noise triggers it
+let SILENCE_MS_TO_STOP = 1400;  // pause this long = your turn is over
+const MIN_SPEECH_MS_TO_SEND = 250; // ignore tiny blips/clicks
+let herName = 'Aria';
+const DEBUG = new URLSearchParams(location.search).has('debug');
+// Don't listen while she's talking (or for a moment after) -- otherwise
+// her own voice coming out of the speaker gets picked straight back up
+// as "you talking". Browser echo cancellation is unreliable here because
+// playback goes through the media stream, not a voice-call stream.
+// 800ms, not 400: the "ended" event fires when the clip finishes
+// decoding, but a phone speaker plus room echo keeps her audible a little
+// past that, and the shorter window let her own voice leak into the mic.
+const ECHO_COOLDOWN_MS = 800;
+// While either of you is audible, the page tells the server once a second
+// so its "it's gone quiet" timer counts from the END of real sound -- not
+// from when the server finished sending her audio (a long reply then ate
+// most of the silence window, and she spoke again before you could answer).
+const ACTIVITY_PING_MS = 1000;
+let lastActivityPing = 0;
+
+function pingActivity(force) {
+  const now = performance.now();
+  if (!force && now - lastActivityPing < ACTIVITY_PING_MS) return;
+  lastActivityPing = now;
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({type: 'activity'}));
+}
+
+// Not every WebView supports the same recording codecs, and an
+// unsupported mimeType makes the MediaRecorder constructor THROW --
+// which, called from inside the rAF monitor loop, used to kill the whole
+// loop silently (looked exactly like "the mic just doesn't work").
+const RECORDER_MIME_CANDIDATES = [
+  'audio/webm;codecs=opus',
+  'audio/webm',
+  'audio/ogg;codecs=opus',
+  'audio/mp4',
+];
+let recorderMimeType = null;
+
+function pickRecorderMimeType() {
+  if (typeof MediaRecorder === 'undefined') return null;
+  for (const type of RECORDER_MIME_CANDIDATES) {
+    try {
+      if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(type)) return type;
+    } catch (e) { /* keep trying */ }
+  }
+  return ''; // empty string = let the browser choose its own default
+}
+
+let ws;
+let micStream, audioCtx, analyser;
+let mediaRecorder, recordedChunks = [];
+let isSpeaking = false, silenceStart = null, speechStart = null;
+let currentReplyAudio = null;
+let lastReplyEndedAt = 0;
+// Her replies arrive a sentence at a time, so clips are queued and played
+// back to back instead of on top of each other.
+const audioQueue = [];
+// True from her first word until the server says "listening" again. The
+// mic stays closed for all of it -- including the short gaps between
+// sentences, which would otherwise open it mid-reply.
+let herTurn = false;
+let inCall = false;
+let monitoring = false;
+let autoAnswered = false;
+
+function show(id) {
+  for (const s of ['idle', 'ringing', 'incall']) {
+    document.getElementById(s).hidden = (s !== id);
+  }
+  if (id !== 'incall') closeKeypad();
+}
+
+// ---------------------------------------------------------------- profile
+
+let hasAvatar = false;
+
+function setProfile(info) {
+  if (info.name) setHerName(info.name);
+  const number = info.number || '';
+  document.getElementById('ringSub').textContent = number || 'calling…';
+  if ('has_avatar' in info) hasAvatar = !!info.has_avatar;
+  renderAvatars();
+}
+
+// Her photo if one is set, else her initial on a gradient -- like a
+// contact without a picture.
+function renderAvatars() {
+  document.querySelectorAll('.her-avatar').forEach(el => {
+    el.textContent = herName.charAt(0).toUpperCase();
+    if (!hasAvatar) return;
+    const img = new Image();
+    img.onload = () => { el.textContent = ''; el.appendChild(img); };
+    img.src = '/avatar?v=' + Date.now();
+  });
+}
+
+// ------------------------------------------------------------------ timer
+
+let callStartedAt = 0, timerHandle = null;
+
+function startTimer() {
+  callStartedAt = Date.now();
+  stopTimer();
+  const tick = () => {
+    const secs = Math.floor((Date.now() - callStartedAt) / 1000);
+    const h = Math.floor(secs / 3600), m = Math.floor(secs / 60) % 60, sec = secs % 60;
+    const pad = n => String(n).padStart(2, '0');
+    document.getElementById('timer').textContent =
+      (h ? h + ':' + pad(m) : pad(m)) + ':' + pad(sec);
+  };
+  tick();
+  timerHandle = setInterval(tick, 1000);
+}
+
+function stopTimer() {
+  if (timerHandle) clearInterval(timerHandle);
+  timerHandle = null;
+}
+
+// --------------------------------------------------------------- controls
+
+let muted = false, onHold = false, speakerOn = true, holdToneHandle = null;
+// Present only inside the app (InCallActivity's JavaScript bridge), where
+// speaker/earpiece routing is actually possible. In a browser there's no
+// way to pick the earpiece, so the button is disabled there.
+const bridge = window.AriaCall || null;
+
+function setOn(id, on) { document.getElementById(id).classList.toggle('on', on); }
+
+function updateBadge() {
+  document.getElementById('badge').textContent =
+    onHold ? 'On hold' : muted ? 'Muted' : '';
+}
+
+function resetControls() {
+  muted = false; onHold = false;
+  setOn('btnMute', false); setOn('btnHold', false);
+  stopHoldTone();
+  if (bridge && bridge.isSpeakerOn) {
+    try { speakerOn = bridge.isSpeakerOn(); } catch (e) {}
+    document.getElementById('btnSpeaker').disabled = false;
+  } else {
+    document.getElementById('btnSpeaker').disabled = true;
+  }
+  setOn('btnSpeaker', speakerOn && !!bridge);
+  let captions = false;
+  try { captions = localStorage.getItem('captions') === '1'; } catch (e) {}
+  showCaptions(captions);
+  updateBadge();
+}
+
+// Mute: she simply can't hear you (the mic keeps running for the level
+// meter, but nothing gets recorded or sent).
+function toggleMute() {
+  muted = !muted;
+  setOn('btnMute', muted);
+  updateBadge();
+}
+
+// Hold: neither of you hears the other. Her audio pauses where it was and
+// resumes on un-hold; the server stops her "you still there?" nudges
+// meanwhile. A soft beep every few seconds, like real hold.
+function toggleHold() {
+  onHold = !onHold;
+  setOn('btnHold', onHold);
+  updateBadge();
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({type: 'hold', on: onHold}));
+  if (onHold) {
+    if (currentReplyAudio) currentReplyAudio.pause();
+    startHoldTone();
+  } else {
+    stopHoldTone();
+    if (currentReplyAudio) currentReplyAudio.play().catch(() => {});
+    else if (audioQueue.length) playNextClip();
+  }
+}
+
+function startHoldTone() {
+  stopHoldTone();
+  const beep = () => playTone([440], 0.25, 0.05);
+  beep();
+  holdToneHandle = setInterval(beep, 4000);
+}
+
+function stopHoldTone() {
+  if (holdToneHandle) clearInterval(holdToneHandle);
+  holdToneHandle = null;
+}
+
+function toggleSpeaker() {
+  if (!bridge || !bridge.setSpeaker) return;
+  try { speakerOn = !!bridge.setSpeaker(!speakerOn); } catch (e) {}
+  setOn('btnSpeaker', speakerOn);
+}
+
+function showCaptions(on) {
+  document.getElementById('transcript').hidden = !on;
+  document.getElementById('captionsSpacer').hidden = on;
+  setOn('btnCaptions', on);
+}
+
+function toggleCaptions() {
+  const on = document.getElementById('transcript').hidden;
+  showCaptions(on);
+  try { localStorage.setItem('captions', on ? '1' : '0'); } catch (e) {}
+}
+
+// ----------------------------------------------------------------- keypad
+
+// Real DTMF frequency pairs, so the keypad sounds like a phone keypad.
+const DTMF = {
+  '1': [697, 1209], '2': [697, 1336], '3': [697, 1477],
+  '4': [770, 1209], '5': [770, 1336], '6': [770, 1477],
+  '7': [852, 1209], '8': [852, 1336], '9': [852, 1477],
+  '*': [941, 1209], '0': [941, 1336], '#': [941, 1477],
+};
+const KEY_LETTERS = { '2': 'ABC', '3': 'DEF', '4': 'GHI', '5': 'JKL', '6': 'MNO', '7': 'PQRS', '8': 'TUV', '9': 'WXYZ', '0': '+' };
+let toneCtx = null;
+
+function playTone(freqs, seconds, volume) {
+  try {
+    toneCtx = toneCtx || new AudioContext();
+    const gain = toneCtx.createGain();
+    gain.gain.value = volume;
+    gain.connect(toneCtx.destination);
+    for (const f of freqs) {
+      const osc = toneCtx.createOscillator();
+      osc.frequency.value = f;
+      osc.connect(gain);
+      osc.start();
+      osc.stop(toneCtx.currentTime + seconds);
+    }
+  } catch (e) { /* no audio -- the digits still show */ }
+}
+
+function buildKeypad() {
+  const keys = document.getElementById('keys');
+  for (const k of ['1','2','3','4','5','6','7','8','9','*','0','#']) {
+    const b = document.createElement('button');
+    b.className = 'key';
+    b.innerHTML = k + (KEY_LETTERS[k] ? '<small>' + KEY_LETTERS[k] + '</small>' : '');
+    b.onclick = () => {
+      playTone(DTMF[k], 0.15, 0.12);
+      document.getElementById('digits').textContent += k;
+    };
+    keys.appendChild(b);
+  }
+}
+
+function openKeypad() {
+  document.getElementById('digits').textContent = '';
+  document.getElementById('keypad').hidden = false;
+}
+
+function closeKeypad() { document.getElementById('keypad').hidden = true; }
+
+// ------------------------------------------------------ incoming (browser)
+
+function ringAction(action) {
+  show('idle');
+  fetch('/call_action', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({action: action, minutes: 10}),
+  }).catch(() => {});
+}
+
+function setTalking(on) {
+  document.getElementById('callAvatar').classList.toggle('talking', on);
+}
+
+
+function connectWs() {
+  // Must match the page's own scheme -- an https:// page is not allowed to
+  // open a plain ws:// connection (blocked as mixed content), which is
+  // exactly what silently broke "Call her" after switching to HTTPS.
+  const wsScheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${wsScheme}//${location.host}/ws`);
+  ws.binaryType = 'arraybuffer';
+  ws.onopen = () => {
+    setIdleStatus('waiting...');
+    // Launched from the native "Accept" screen (InCallActivity loads this
+    // page with ?autoanswer=1) -- you already accepted, skip straight
+    // into the call instead of showing the idle "Call her" button again.
+    // Guarded because onopen also fires on every reconnect, which was
+    // starting a second call (two openers back to back).
+    if (!autoAnswered && new URLSearchParams(location.search).has('autoanswer')) {
+      autoAnswered = true;
+      autoAnswerWhenReady();
+    }
+  };
+  ws.onmessage = (event) => {
+    if (typeof event.data === 'string') {
+      handleControlMessage(JSON.parse(event.data));
+    } else {
+      playReplyAudio(event.data);
+    }
+  };
+  ws.onclose = () => { setIdleStatus('disconnected, retrying...'); setTimeout(connectWs, 2000); };
+  ws.onerror = () => ws.close();
+}
+
+function setIdleStatus(text) {
+  const el = document.getElementById('idleStatus');
+  if (el) el.textContent = text;
+}
+
+function handleControlMessage(msg) {
+  if (msg.type === 'ring') {
+    if (inCall) return;
+    setProfile(msg);
+    show('ringing');
+  } else if (msg.type === 'ring_ended') {
+    if (!inCall) show('idle');
+  } else if (msg.type === 'call_started') {
+    inCall = true;
+    setProfile(msg);
+    document.getElementById('transcript').innerHTML = '';
+    show('incall');
+    resetControls();
+    startTimer();
+    startMicMonitoring();
+  } else if (msg.type === 'call_ended') {
+    inCall = false;
+    stopTimer();
+    stopHoldTone();
+    stopMicMonitoring();
+    // In the app, hanging up closes the call screen, like a real call.
+    if (bridge && bridge.endCall) bridge.endCall();
+    else show('idle');
+  } else if (msg.type === 'state') {
+    setIncallStatus(msg.value);
+    if (msg.value === 'speaking') herTurn = true;
+    if (msg.value === 'listening') herTurn = false;
+    if (msg.value === 'speaking' && msg.text) {
+      appendTranscript('her', msg.text);
+    }
+  } else if (msg.type === 'her_more') {
+    appendToLast('her', msg.text);
+  } else if (msg.type === 'filler') {
+    // "hmm..." while she thinks -- heard, not shown in the transcript.
+  } else if (msg.type === 'you_said') {
+    // merge = you kept talking after a pause; the server combined both
+    // parts, so replace your previous line rather than adding a second.
+    if (msg.merge) removeLast('you');
+    appendTranscript('you', msg.text);
+  } else if (msg.type === 'error') {
+    // Server-side failure (usually the PC losing internet/DNS mid-call).
+    // Surfaced here so the call doesn't just go mysteriously quiet.
+    setIncallStatus('⚠ ' + msg.message);
+    appendTranscript('her', '(couldn’t reply: ' + msg.message + ')');
+  }
+}
+
+// Normal turn states aren't shown -- a real call screen doesn't say
+// "listening...". Only problems (errors, playback failures) appear.
+function setIncallStatus(value) {
+  const el = document.getElementById('incallStatus');
+  el.textContent = ['listening', 'thinking', 'speaking'].includes(value) ? '' : value;
+}
+
+function appendTranscript(who, text) {
+  const t = document.getElementById('transcript');
+  const p = document.createElement('p');
+  p.className = who;
+  p.textContent = (who === 'you' ? 'You: ' : herName + ': ') + text;
+  t.appendChild(p);
+  t.scrollTop = t.scrollHeight;
+}
+
+function appendToLast(who, text) {
+  const t = document.getElementById('transcript');
+  const last = t.lastElementChild;
+  if (last && last.className === who) {
+    last.textContent += ' ' + text;
+    t.scrollTop = t.scrollHeight;
+  } else {
+    appendTranscript(who, text);
+  }
+}
+
+function removeLast(who) {
+  const lines = document.querySelectorAll('#transcript p.' + who);
+  if (lines.length) lines[lines.length - 1].remove();
+}
+
+function setHerName(name) {
+  herName = name;
+  document.title = name;
+  document.querySelectorAll('.her-name').forEach(el => { el.textContent = name; });
+  renderAvatars();
+}
+
+async function loadSettings() {
+  try {
+    const s = await (await fetch('/settings')).json();
+    if (s.mic_threshold) SPEECH_RMS_THRESHOLD = s.mic_threshold;
+    if (s.end_of_speech_ms) SILENCE_MS_TO_STOP = s.end_of_speech_ms;
+    setProfile({name: s.name, number: s.show_number ? s.phone_number : ''});
+  } catch (e) { /* keep the fallbacks */ }
+  try {
+    hasAvatar = (await fetch('/avatar')).ok;
+    renderAvatars();
+  } catch (e) {}
+}
+
+// Answering from a LOCKED phone: the call screen starts loading behind the
+// lock screen while you unlock, so her greeting used to play before you
+// could see or properly hear it -- you'd unlock to find it already in the
+// transcript. So the call only actually starts once the page is on screen
+// and the mic is up (or has definitively failed), and she greets you then.
+async function autoAnswerWhenReady() {
+  if (document.visibilityState !== 'visible') {
+    setIdleStatus('connecting...');
+    document.addEventListener('visibilitychange', function onVisible() {
+      if (document.visibilityState !== 'visible') return;
+      document.removeEventListener('visibilitychange', onVisible);
+      autoAnswerWhenReady();
+    });
+    return;
+  }
+  await startMicMonitoring(); // returns once running, or once it's failed
+  callHerNow();
+}
+
+function callHerNow() {
+  ws.send(JSON.stringify({type: 'call_me_now'}));
+}
+function answerCall() {
+  show('incall');
+  ws.send(JSON.stringify({type: 'answer'}));
+}
+function declineCall() {
+  show('idle');
+  ws.send(JSON.stringify({type: 'decline'}));
+}
+function hangUp() {
+  ws.send(JSON.stringify({type: 'hangup'}));
+}
+
+function playReplyAudio(arrayBuffer) {
+  audioQueue.push(arrayBuffer);
+  if (!currentReplyAudio) playNextClip();
+}
+
+function playNextClip() {
+  if (onHold) { currentReplyAudio = null; return; } // resumes on un-hold
+  const next = audioQueue.shift();
+  if (!next) {
+    currentReplyAudio = null;
+    setTalking(false);
+    lastReplyEndedAt = performance.now(); // starts the echo cooldown
+    pingActivity(true); // she's finished: your silence starts counting now
+    return;
+  }
+  setTalking(true);
+  const url = URL.createObjectURL(new Blob([next], {type: 'audio/mpeg'}));
+  const audio = new Audio(url);
+  currentReplyAudio = audio;
+  const done = () => {
+    URL.revokeObjectURL(url);
+    if (currentReplyAudio === audio) playNextClip();
+  };
+  audio.onended = () => { if (!onHold) done(); };
+  audio.onerror = done;
+  audio.play().catch((err) => {
+    setIncallStatus('playback error: ' + err.message);
+    done();
+  });
+}
+
+// Mic diagnostics go in their own line, NOT the shared status line --
+// server state updates ("speaking...", "listening...") overwrite that one,
+// which previously wiped out any mic error before it could be read.
+function setMicInfo(text) {
+  const el = document.getElementById('micLevel');
+  if (el) el.textContent = 'mic: ' + text;
+}
+
+// Whoever held the mic before us is often only milliseconds from letting
+// go (a just-closed call screen, a tab going to background), so a failed
+// open is worth retrying rather than giving up on. The second attempt also
+// drops the audio-processing constraints: a few Android devices can't open
+// the source at all with echoCancellation/noiseSuppression requested, and
+// fail with the very same NotReadableError.
+const MIC_ATTEMPTS = [
+  { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+  { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+  true,
+];
+
+async function acquireMicStream() {
+  let lastErr;
+  for (let i = 0; i < MIC_ATTEMPTS.length; i++) {
+    try {
+      return await navigator.mediaDevices.getUserMedia({ audio: MIC_ATTEMPTS[i] });
+    } catch (err) {
+      lastErr = err;
+      const name = err.name || '';
+      // A real permission refusal won't fix itself by asking again.
+      if (name === 'NotAllowedError' || name === 'SecurityError') break;
+      if (i < MIC_ATTEMPTS.length - 1) {
+        setMicInfo('busy, retrying (' + (i + 2) + '/' + MIC_ATTEMPTS.length + ')…');
+        await new Promise(r => setTimeout(r, 700));
+      }
+    }
+  }
+  throw lastErr;
+}
+
+// Four rounds of plausible-sounding theories (permissions, a rival app
+// holding the hardware, a stale WebView) all died on contact, so this
+// stops guessing and prints what the WebView actually sees. Rendered into
+// the transcript because the one-line mic label can't hold it.
+async function dumpMicDiagnostics(err) {
+  const lines = [];
+  lines.push('url: ' + location.protocol + '//' + location.host);
+  lines.push('isSecureContext: ' + window.isSecureContext);
+  // "; wv)" in the UA means Android WebView (our app); without it this is
+  // Chrome. The two have different mic rules, so knowing which one produced
+  // a failure matters.
+  lines.push('engine: ' + (/; wv\)/.test(navigator.userAgent) ? 'Android WebView (app)' : 'browser'));
+  // The WebView and Chrome are separate Chromium installs that update
+  // independently. Comparing these two numbers is the whole point: Chrome
+  // works while the app doesn't, and a badly outdated WebView would
+  // explain that on its own.
+  const chromeVersion = (navigator.userAgent.match(/Chrome\/([\d.]+)/) || [])[1];
+  lines.push('chromium: ' + (chromeVersion || 'unknown'));
+  lines.push('mediaDevices: ' + !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia));
+  if (err) lines.push('error: ' + (err.name || '?') + ' / ' + (err.message || '?'));
+
+  try {
+    const perm = await navigator.permissions.query({ name: 'microphone' });
+    lines.push('permission.microphone: ' + perm.state);
+  } catch (e) {
+    lines.push('permission.microphone: unavailable (' + e.name + ')');
+  }
+
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const inputs = devices.filter(d => d.kind === 'audioinput');
+    lines.push('audioinput devices: ' + inputs.length);
+    // Empty labels with a granted permission means the page never really
+    // got access, whatever the OS settings screen claims.
+    inputs.forEach((d, i) => {
+      lines.push('  [' + i + '] label="' + (d.label || '(empty)') + '" id=' + (d.deviceId || '?').slice(0, 12));
+    });
+  } catch (e) {
+    lines.push('enumerateDevices failed: ' + e.name + ' ' + e.message);
+  }
+
+  const box = document.getElementById('transcript');
+  showCaptions(true); // where the diagnostics are printed
+  if (box) {
+    const pre = document.createElement('pre');
+    pre.style.cssText = 'font-size:11px;white-space:pre-wrap;opacity:0.7;margin:8px 0;';
+    pre.textContent = lines.join('\n');
+    box.appendChild(pre);
+    box.scrollTop = box.scrollHeight;
+  }
+}
+
+// Tapping the mic line retries by hand, so a mic freed after the call
+// started (you closed the other app) doesn't require hanging up first.
+function offerMicRetry() {
+  const el = document.getElementById('micLevel');
+  if (!el) return;
+  el.style.cursor = 'pointer';
+  el.onclick = () => {
+    el.onclick = null;
+    monitoring = false;
+    startMicMonitoring();
+  };
+}
+
+async function startMicMonitoring() {
+  if (monitoring) return; // already running; don't stack duplicate loops
+  // The native wrapper tells us up front when the OS-level RECORD_AUDIO
+  // permission is off, because the error the WebView would otherwise
+  // produce ("NotReadableError") looks nothing like a permission problem.
+  if (new URLSearchParams(location.search).get('micdenied') === '1') {
+    setMicInfo('OS mic permission is OFF — Settings > Apps > phone_app > Permissions > Microphone > Allow');
+    offerMicRetry();
+    return;
+  }
+  setMicInfo('starting…');
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    setMicInfo('unavailable (page must be https://, not http://)');
+    return;
+  }
+  setMicInfo('requesting permission…');
+  try {
+    micStream = await acquireMicStream();
+  } catch (err) {
+    const name = err.name || '';
+    if (name === 'NotReadableError' || name === 'TrackStartError') {
+      // Chromium reports NotReadableError for ANY failure to open
+      // AudioRecord -- a rival app holding the mic, a missing OS
+      // permission, or the audio backend refusing outright. It does NOT
+      // specifically mean "busy"; calling it that here cost us a long
+      // detour hunting an app that was never holding anything. The
+      // diagnostics dump below is what actually narrows it down.
+      setMicInfo('cannot open mic (NotReadableError) — see details below, tap to retry');
+      offerMicRetry();
+    } else if (name === 'NotAllowedError' || name === 'SecurityError') {
+      setMicInfo('permission denied — allow mic for this app, then tap here.');
+      offerMicRetry();
+    } else {
+      setMicInfo('failed: ' + name + ' ' + err.message);
+      offerMicRetry();
+    }
+    dumpMicDiagnostics(err);
+    return;
+  }
+  setMicInfo('got stream, starting audio…');
+  // On success only with ?debug=1 -- useful for comparing a working setup
+  // against a broken one, noise otherwise.
+  if (DEBUG) dumpMicDiagnostics(null);
+
+  try {
+    audioCtx = new AudioContext();
+  } catch (err) {
+    setMicInfo('AudioContext failed: ' + err.message);
+    return;
+  }
+
+  // NOTE: deliberately NOT awaited. In some WebViews a blocked
+  // AudioContext.resume() never settles at all (it doesn't reject, it
+  // just hangs) -- awaiting it stopped this function dead before the
+  // monitor loop ever started, which looked exactly like "the mic does
+  // nothing" with no error anywhere. Fire it off and carry on regardless.
+  try {
+    const resuming = audioCtx.resume();
+    if (resuming && typeof resuming.catch === 'function') resuming.catch(() => {});
+  } catch (err) { /* non-fatal */ }
+
+  try {
+    const source = audioCtx.createMediaStreamSource(micStream);
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 512;
+    source.connect(analyser);
+  } catch (err) {
+    setMicInfo('analyser setup failed: ' + err.message);
+    return;
+  }
+
+  // Some engines only unlock audio on a real touch. Harmless if already
+  // running; this just gives it another chance on first interaction.
+  const resumeOnTouch = () => { try { audioCtx.resume(); } catch (e) {} };
+  document.addEventListener('touchstart', resumeOnTouch, { once: true });
+  document.addEventListener('click', resumeOnTouch, { once: true });
+
+  monitoring = true;
+  document.getElementById('micLevel').textContent = '';
+  monitorLoop();
+}
+
+// Without this, navigating away / reloading / the WebView being swapped
+// out leaves the mic track live until the whole process dies -- and the
+// NEXT call screen then gets NotReadableError because the corpse of this
+// page still owns the hardware. pagehide fires in cases unload doesn't
+// (bfcache, Android backgrounding), so both are wired up.
+window.addEventListener('pagehide', stopMicMonitoring);
+window.addEventListener('beforeunload', stopMicMonitoring);
+
+function stopMicMonitoring() {
+  monitoring = false;
+  if (micStream) {
+    micStream.getTracks().forEach(t => t.stop());
+    micStream = null;
+  }
+  if (audioCtx) {
+    audioCtx.close();
+    audioCtx = null;
+  }
+  audioQueue.length = 0;
+  herTurn = false;
+  if (currentReplyAudio) {
+    currentReplyAudio.pause();
+    currentReplyAudio = null;
+  }
+  isSpeaking = false;
+  silenceStart = null;
+}
+
+function monitorLoop() {
+  if (!monitoring) return;
+  // Everything in here is wrapped so a single unexpected error can never
+  // silently stop the loop (which is what made this look completely dead
+  // rather than merely broken).
+  try {
+    const data = new Uint8Array(analyser.frequencyBinCount);
+    analyser.getByteTimeDomainData(data);
+    let sumSquares = 0;
+    for (let i = 0; i < data.length; i++) {
+      const v = data[i] - 128;
+      sumSquares += v * v;
+    }
+    const rms = Math.sqrt(sumSquares / data.length);
+    const now = performance.now();
+
+    updateMicLevel(rms);
+
+    // Echo guard: ignore the mic entirely while she's speaking and for a
+    // beat afterwards, so her own voice out of the speaker isn't treated
+    // as you talking.
+    const herVoicePlaying = !!currentReplyAudio || audioQueue.length > 0;
+    const inEchoCooldown = now - lastReplyEndedAt < ECHO_COOLDOWN_MS;
+    if (herVoicePlaying || isSpeaking) pingActivity(false);
+    if (herTurn || herVoicePlaying || inEchoCooldown || muted || onHold) {
+      if (isSpeaking) {
+        isSpeaking = false;
+        silenceStart = null;
+        try { if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop(); }
+        catch (e) { /* nothing useful to do */ }
+      }
+      requestAnimationFrame(monitorLoop);
+      return;
+    }
+
+    if (rms > SPEECH_RMS_THRESHOLD) {
+      if (!isSpeaking) {
+        isSpeaking = true;
+        speechStart = now;
+        startRecording();
+      }
+      silenceStart = null;
+    } else if (isSpeaking) {
+      if (silenceStart === null) silenceStart = now;
+      if (now - silenceStart > SILENCE_MS_TO_STOP) {
+        isSpeaking = false;
+        stopRecording(now - speechStart);
+      }
+    }
+  } catch (err) {
+    setIncallStatus('mic loop error: ' + err.message);
+  }
+  requestAnimationFrame(monitorLoop);
+}
+
+function updateMicLevel(rms) {
+  // Shown on purpose: if this stays pinned at 0 the mic is dead (usually
+  // a permission problem), if it moves when you talk but never triggers,
+  // SPEECH_RMS_THRESHOLD just needs tuning. Saves guessing blind.
+  // Also includes the AudioContext state, since a 'suspended' context is
+  // the other way this silently produces nothing but zeros.
+  if (!DEBUG) return; // the meter is a debugging aid, not part of a call screen
+  const bars = '█'.repeat(Math.min(10, Math.round(rms / 4)));
+  const ctxState = audioCtx ? audioCtx.state : '?';
+  setMicInfo(`${rms.toFixed(1)} ${bars} [${ctxState}]`);
+}
+
+function startRecording() {
+  try {
+    recordedChunks = [];
+    if (recorderMimeType === null) recorderMimeType = pickRecorderMimeType();
+    const options = recorderMimeType ? { mimeType: recorderMimeType } : undefined;
+    mediaRecorder = new MediaRecorder(micStream, options);
+    mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) recordedChunks.push(e.data); };
+    mediaRecorder.start();
+  } catch (err) {
+    isSpeaking = false;
+    setIncallStatus('recorder error: ' + err.message);
+  }
+}
+
+function stopRecording(durationMs) {
+  if (!mediaRecorder || mediaRecorder.state === 'inactive') return;
+  mediaRecorder.onstop = async () => {
+    try {
+      if (durationMs < MIN_SPEECH_MS_TO_SEND) return; // too short, probably noise
+      const blob = new Blob(recordedChunks, { type: recorderMimeType || 'audio/webm' });
+      const buf = await blob.arrayBuffer();
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(buf);
+    } catch (err) {
+      setIncallStatus('send error: ' + err.message);
+    }
+  };
+  try {
+    mediaRecorder.stop();
+  } catch (err) {
+    setIncallStatus('recorder stop error: ' + err.message);
+  }
+}
+
+buildKeypad();
+loadSettings();
+connectWs();
+</script>
+</body>
+</html>
