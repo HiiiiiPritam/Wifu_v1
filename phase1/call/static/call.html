@@ -197,6 +197,11 @@ let SPEECH_RMS_THRESHOLD = 14;  // raise if background noise triggers it
 let SILENCE_MS_TO_STOP = 1400;  // pause this long = your turn is over
 const MIN_SPEECH_MS_TO_SEND = 250; // ignore tiny blips/clicks
 let herName = 'Aria';
+// Where this page is served from: "/" normally, "/s/<secret>/" once the
+// server is exposed to the internet (see call/access.py). Every request
+// below goes through api() so both work unchanged.
+const API_BASE = window.API_BASE || '/';
+const api = (path) => API_BASE + path;
 const DEBUG = new URLSearchParams(location.search).has('debug');
 // Don't listen while she's talking (or for a moment after) -- otherwise
 // her own voice coming out of the speaker gets picked straight back up
@@ -286,7 +291,7 @@ function renderAvatars() {
     if (!hasAvatar) return;
     const img = new Image();
     img.onload = () => { el.textContent = ''; el.appendChild(img); };
-    img.src = '/avatar?v=' + Date.now();
+    img.src = api('avatar') + '?v=' + Date.now();
   });
 }
 
@@ -454,7 +459,7 @@ function closeKeypad() { document.getElementById('keypad').hidden = true; }
 
 function ringAction(action) {
   show('idle');
-  fetch('/call_action', {
+  fetch(api('call_action'), {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({action: action, minutes: 10}),
@@ -471,7 +476,7 @@ function connectWs() {
   // open a plain ws:// connection (blocked as mixed content), which is
   // exactly what silently broke "Call her" after switching to HTTPS.
   const wsScheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  ws = new WebSocket(`${wsScheme}//${location.host}/ws`);
+  ws = new WebSocket(`${wsScheme}//${location.host}${api('ws')}`);
   ws.binaryType = 'arraybuffer';
   ws.onopen = () => {
     setIdleStatus('waiting...');
@@ -589,13 +594,13 @@ function setHerName(name) {
 
 async function loadSettings() {
   try {
-    const s = await (await fetch('/settings')).json();
+    const s = await (await fetch(api('settings'))).json();
     if (s.mic_threshold) SPEECH_RMS_THRESHOLD = s.mic_threshold;
     if (s.end_of_speech_ms) SILENCE_MS_TO_STOP = s.end_of_speech_ms;
     setProfile({name: s.name, number: s.show_number ? s.phone_number : ''});
   } catch (e) { /* keep the fallbacks */ }
   try {
-    hasAvatar = (await fetch('/avatar')).ok;
+    hasAvatar = (await fetch(api('avatar'))).ok;
     renderAvatars();
   } catch (e) {}
 }

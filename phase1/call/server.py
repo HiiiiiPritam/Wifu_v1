@@ -380,8 +380,16 @@ async def _broadcast(message: dict) -> None:
 
 
 @app.get("/")
-async def index() -> HTMLResponse:
-    return HTMLResponse(HTML_PATH.read_text(encoding="utf-8"))
+async def index(request: Request) -> HTMLResponse:
+    """The page is served under the secret path (see access.py), so it's
+    told where it lives -- every request it makes is relative to that.
+    (A <base> tag would have been simpler but breaks the inline SVG icons,
+    which reference themselves by fragment.)"""
+    base = request.scope.get("root_path", "") + "/"
+    html = HTML_PATH.read_text(encoding="utf-8").replace(
+        "<script>", f'<script>window.API_BASE = "{base}";</script>\n<script>', 1
+    )
+    return HTMLResponse(html)
 
 
 @app.get("/settings")

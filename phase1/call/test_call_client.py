@@ -21,7 +21,9 @@ import av
 import edge_tts
 import websockets
 
-URL = "wss://localhost:8765/ws"
+from call import access
+
+URL = f"wss://localhost:8765{access.mount_path()}/ws"
 TEST_VOICE = "en-US-GuyNeural"  # a different voice from hers, playing "you"
 
 

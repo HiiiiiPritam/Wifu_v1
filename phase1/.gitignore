@@ -4,6 +4,7 @@
 .certs/
 vts_token.txt
 device_token.json
+.call_token
 
 # Personal data -- what she knows about you, your calls, your setup
 memory.json
