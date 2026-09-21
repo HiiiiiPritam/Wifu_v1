@@ -66,7 +66,7 @@ CHECKPOINT_EVERY = 10
 # eats into the budget her voice depends on (Groq's free tier gives each
 # model 8,000 tokens a minute).
 NOTE_MODEL = llm.LLM_MODEL
-KEEP_CALL_LOGS_DAYS = 30
+KEEP_CALL_LOGS = 5  # raw transcripts of the most recent calls; older ones are deleted
 # A call whose connection drops (mobile data blip, or Android rebuilding the
 # call screen) is kept alive this long for the phone to reconnect, instead
 # of ending on the spot.
@@ -161,16 +161,31 @@ def _busy() -> bool:
     return _reply_running() or state["utterances_in_flight"] > 0
 
 
-# One plain-text transcript per day in phase1/call_logs/, so when a call
+# One plain-text transcript per call in phase1/call_logs/, so when a call
 # does something odd there's a record of exactly what was said instead of
-# a reconstruction from memory.
+# a reconstruction from memory. Only the last KEEP_CALL_LOGS calls are kept.
 LOG_DIR = ROOT / "call_logs"
+_log_path: Path | None = None  # the current (or last) call's transcript
+
+
+def _new_call_log() -> None:
+    """Starts a transcript file for a new call and deletes the oldest ones
+    beyond KEEP_CALL_LOGS. Lines logged between calls (a replayed request
+    right after hang-up) go into the last call's file."""
+    global _log_path
+    try:
+        LOG_DIR.mkdir(exist_ok=True)
+        _log_path = LOG_DIR / f"{datetime.now():%Y-%m-%d_%H%M%S}.txt"
+        _log_path.touch()
+        _delete_old_call_logs()
+    except OSError:
+        pass
 
 
 def _log(line: str) -> None:
     try:
         LOG_DIR.mkdir(exist_ok=True)
-        path = LOG_DIR / f"{datetime.now():%Y-%m-%d}.txt"
+        path = _log_path or LOG_DIR / f"{datetime.now():%Y-%m-%d_%H%M%S}.txt"
         with open(path, "a", encoding="utf-8") as f:
             f.write(f"[{datetime.now():%H:%M:%S}] {line}\n")
     except OSError:
@@ -243,14 +258,17 @@ async def _memory_maintenance() -> None:
 
 
 def _delete_old_call_logs() -> None:
-    """Raw transcripts are never shown to her -- they're kept only to
-    repair a failed memory update -- so they go after KEEP_CALL_LOGS_DAYS."""
-    cutoff = datetime.now() - timedelta(days=KEEP_CALL_LOGS_DAYS)
-    for path in LOG_DIR.glob("*.txt"):
+    """Raw transcripts are never shown to her -- they're kept only to see
+    what went wrong in a recent call -- so only the newest KEEP_CALL_LOGS
+    stay. (This also clears out the old one-file-per-day transcripts.)"""
+    try:
+        paths = sorted(LOG_DIR.glob("*.txt"), key=lambda p: p.stat().st_mtime, reverse=True)
+    except OSError:
+        return
+    for path in paths[KEEP_CALL_LOGS:]:
         try:
-            if datetime.strptime(path.stem, "%Y-%m-%d") < cutoff:
-                path.unlink()
-        except (ValueError, OSError):
+            path.unlink()
+        except OSError:
             continue
 
 
@@ -978,6 +996,7 @@ async def _start_call(ws: WebSocket) -> None:
         state["recent_greetings"] = (state["recent_greetings"] + [greeting])[-10:]
     state["history"].append({"role": "assistant", "content": greeting})
     why = f" -- scheduled: {ring['reason']}" if ring is not None and ring["reason"] else ""
+    _new_call_log()
     _log(f"===== call started ({'she called' if she_is_calling else 'you called'}{why}) =====")
     _log(f"HER: {greeting}")
     try:
