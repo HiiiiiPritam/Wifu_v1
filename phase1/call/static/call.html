@@ -488,6 +488,10 @@ function connectWs() {
     if (!autoAnswered && new URLSearchParams(location.search).has('autoanswer')) {
       autoAnswered = true;
       autoAnswerWhenReady();
+    } else if (inCall) {
+      // The connection dropped mid-call and came back (mobile data blip):
+      // pick the same call back up. The server holds it for ~20s.
+      ws.send(JSON.stringify({type: 'resume'}));
     }
   };
   ws.onmessage = (event) => {
@@ -516,10 +520,15 @@ function handleControlMessage(msg) {
   } else if (msg.type === 'call_started') {
     inCall = true;
     setProfile(msg);
-    document.getElementById('transcript').innerHTML = '';
+    // resumed = the same call carrying on after a reconnect: keep the
+    // timer, transcript and mute/hold as they were. (A rebuilt call screen
+    // resumes with nothing set up yet, hence the timer check.)
+    if (!msg.resumed || !timerHandle) {
+      document.getElementById('transcript').innerHTML = '';
+      resetControls();
+      startTimer();
+    }
     show('incall');
-    resetControls();
-    startTimer();
     startMicMonitoring();
   } else if (msg.type === 'call_ended') {
     inCall = false;

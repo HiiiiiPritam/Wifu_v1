@@ -68,6 +68,11 @@ const withAriaManifest = (config) =>
         $: {
           'android:name': '.IncomingCallActivity',
           'android:exported': 'false',
+          // Handle these ourselves instead of Android destroying and
+          // rebuilding the screen: a rebuild reloads the call page, which
+          // dialed a phantom second call (see call/server.py _call_request).
+          'android:configChanges': 'orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|uiMode|density|navigation',
+          'android:screenOrientation': 'portrait',
           'android:showWhenLocked': 'true',
           'android:turnScreenOn': 'true',
           'android:excludeFromRecents': 'true',
@@ -79,6 +84,11 @@ const withAriaManifest = (config) =>
         $: {
           'android:name': '.InCallActivity',
           'android:exported': 'false',
+          // Handle these ourselves instead of Android destroying and
+          // rebuilding the screen: a rebuild reloads the call page, which
+          // dialed a phantom second call (see call/server.py _call_request).
+          'android:configChanges': 'orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|uiMode|density|navigation',
+          'android:screenOrientation': 'portrait',
           'android:showWhenLocked': 'true',
           'android:turnScreenOn': 'true',
           'android:launchMode': 'singleInstance',

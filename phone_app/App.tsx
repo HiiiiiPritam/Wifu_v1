@@ -276,7 +276,7 @@ export default function App() {
   }
 
   const name = settings?.name || 'Aria';
-  const nextCall = scheduled.find((c) => c.status === 'pending');
+  const upcoming = scheduled.filter((c) => c.status === 'pending');
 
   return (
     <View style={styles.root}>
@@ -287,7 +287,7 @@ export default function App() {
             name={name}
             number={settings?.show_number ? settings.phone_number : ''}
             avatarUri={avatarUri}
-            nextCall={nextCall}
+            upcoming={upcoming}
             connected={!!settings}
             busy={busy}
             status={status}
@@ -357,7 +357,7 @@ function HomeTab(props: {
   name: string;
   number: string;
   avatarUri: string | null;
-  nextCall?: ScheduledCall;
+  upcoming: ScheduledCall[];
   connected: boolean;
   busy: boolean;
   status: string;
@@ -376,11 +376,17 @@ function HomeTab(props: {
         <Text style={styles.callButtonText}>📞  Call {props.name}</Text>
       </Pressable>
 
-      {props.nextCall && (
+      {props.upcoming.length > 0 && (
         <View style={[styles.card, styles.nextCall]}>
-          <Text style={styles.label}>Next scheduled call</Text>
-          <Text style={styles.nextCallWhen}>{describeWhen(props.nextCall.at)}</Text>
-          {!!props.nextCall.note && <Text style={styles.nextCallNote}>{props.nextCall.note}</Text>}
+          <Text style={styles.label}>
+            {props.upcoming.length === 1 ? 'Scheduled call' : `${props.upcoming.length} scheduled calls`}
+          </Text>
+          {props.upcoming.map((c, i) => (
+            <View key={c.id} style={i > 0 ? styles.upcomingRow : undefined}>
+              <Text style={styles.nextCallWhen}>{describeWhen(c.at)}</Text>
+              {!!c.note && <Text style={styles.nextCallNote}>{c.note}</Text>}
+            </View>
+          ))}
         </View>
       )}
 
@@ -789,6 +795,7 @@ const styles = StyleSheet.create({
   nextCall: { alignSelf: 'stretch', marginTop: 32 },
   nextCallWhen: { color: COLORS.pink, fontSize: 18, fontWeight: '600' },
   nextCallNote: { color: COLORS.text, marginTop: 4 },
+  upcomingRow: { marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: COLORS.border },
 
   avatarImage: { borderWidth: 3, borderColor: COLORS.pink },
   avatarFallback: {

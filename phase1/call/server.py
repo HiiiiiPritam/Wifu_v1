@@ -56,6 +56,13 @@ DECLINE_SNOOZE_MINUTES = 30
 BUSY_SNOOZE_MINUTES = 60
 BUSY_RETRY_SCHEDULED_MINUTES = 15
 AVATAR_PATH = ROOT / "avatar.img"
+# A call whose connection drops (mobile data blip, or Android rebuilding the
+# call screen) is kept alive this long for the phone to reconnect, instead
+# of ending on the spot.
+RESUME_GRACE_SECONDS = 20
+# A "call her" arriving this soon after a call ended, with nothing ringing,
+# is Android replaying the call screen's launch -- not you dialing again.
+REPLAY_GUARD_SECONDS = 8
 # How long answering a scheduled call waits for her prepared opening line
 # before falling back to a plain hello (it's normally ready long before).
 REASON_GREETING_WAIT = 6
@@ -82,6 +89,8 @@ state = {
     "ring": None,  # the ring in progress, if any (see _ring)
     "snooze_until": 0.0,  # no periodic calls before this (monotonic)
     "on_hold": False,
+    "resume_task": None,  # ends a call if the phone doesn't reconnect in time
+    "last_call_ended_at": 0.0,
     "recent_greetings": [],
     "recent_nudges": [],
     "last_filler": None,
@@ -434,8 +443,13 @@ async def set_avatar(request: Request) -> JSONResponse:
 
 
 @app.get("/schedule")
-async def get_schedule() -> JSONResponse:
-    return JSONResponse(schedule.load())
+async def get_schedule(all: bool = False) -> JSONResponse:
+    """Upcoming calls only. Finished ones (done/missed) are kept on disk
+    for a while but aren't worth showing -- ?all=true includes them."""
+    entries = schedule.load()
+    if not all:
+        entries = [e for e in entries if e["status"] == "pending"]
+    return JSONResponse(entries)
 
 
 @app.post("/schedule")
@@ -725,11 +739,11 @@ async def _in_call_silence_watcher() -> None:
             state["last_activity_at"] = time.monotonic()
 
 
-async def _call_duration_timer(ws: WebSocket, max_minutes: float) -> None:
+async def _call_duration_timer(max_minutes: float) -> None:
     await asyncio.sleep(max_minutes * 60)
     if state["in_call"]:
         print(f"Call hit the {max_minutes:g}-minute limit, ending it.")
-        await _end_call(ws)
+        await _end_call()
 
 
 async def _start_call(ws: WebSocket) -> None:
@@ -794,25 +808,28 @@ async def _start_call(ws: WebSocket) -> None:
 
     state["last_activity_at"] = time.monotonic()
     state["silence_watcher_task"] = _spawn(_in_call_silence_watcher())
-    state["duration_timer_task"] = _spawn(_call_duration_timer(ws, s["max_call_duration_minutes"]))
+    state["duration_timer_task"] = _spawn(_call_duration_timer(s["max_call_duration_minutes"]))
 
 
-async def _end_call(ws: WebSocket) -> None:
+async def _end_call() -> None:
     if not state["in_call"]:
         return
+    ws = state["call_ws"]
     state["in_call"] = False
     state["call_ws"] = None
+    state["last_call_ended_at"] = time.monotonic()
     current = asyncio.current_task()
-    for key in ("silence_watcher_task", "duration_timer_task", "reply_task"):
+    for key in ("silence_watcher_task", "duration_timer_task", "reply_task", "resume_task"):
         task = state[key]
         # Skip self-cancel: the duration timer calls this from inside itself.
         if task is not None and task is not current and not task.done():
             task.cancel()
         state[key] = None
-    try:
-        await ws.send_json({"type": "call_ended"})
-    except Exception:
-        pass  # socket may already be gone
+    if ws is not None:
+        try:
+            await ws.send_json({"type": "call_ended"})
+        except Exception:
+            pass  # socket may already be gone
 
     history, state["history"] = state["history"], []
     _log("===== call ended =====")
@@ -839,8 +856,8 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             if message.get("text") is not None:
                 data = json.loads(message["text"])
                 kind = data.get("type")
-                if kind in ("call_me_now", "answer"):
-                    await _start_call(ws)
+                if kind in ("call_me_now", "answer", "resume"):
+                    await _call_request(ws, kind)
                 elif kind == "decline":
                     _end_ring("decline")
                 elif kind == "hold":
@@ -857,8 +874,9 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                     # answer, and she'd speak again over the gap.
                     state["last_activity_at"] = time.monotonic()
                 elif kind == "hangup":
-                    await _end_call(ws)
-            elif message.get("bytes") is not None and state["in_call"]:
+                    if state["call_ws"] is ws:
+                        await _end_call()
+            elif message.get("bytes") is not None and state["in_call"] and state["call_ws"] is ws:
                 # Not awaited: the receive loop must keep reading so a
                 # second clip (you kept talking) can arrive and cancel the
                 # first one's pending reply.
@@ -868,4 +886,71 @@ async def websocket_endpoint(ws: WebSocket) -> None:
     finally:
         state["connected_sockets"].discard(ws)
         if state["in_call"] and state["call_ws"] is ws:
-            await _end_call(ws)
+            # Don't end the call yet -- give the phone a chance to come back.
+            state["call_ws"] = None
+            _log("(connection lost -- waiting for the phone to reconnect)")
+            state["resume_task"] = _spawn(_end_if_not_resumed())
+
+
+async def _end_if_not_resumed() -> None:
+    await asyncio.sleep(RESUME_GRACE_SECONDS)
+    if state["in_call"] and state["call_ws"] is None:
+        print("Call ended -- the phone didn't reconnect.")
+        await _end_call()
+
+
+async def _call_request(ws: WebSocket, kind: str) -> None:
+    """A page asking for a call: "call_me_now" (you tapped Call, or the
+    call screen opened after Accept), "answer" (browser ring screen), or
+    "resume" (the page reconnected and believes a call is still on).
+
+    Android rebuilds the call screen more often than you'd think -- screen
+    off/on, the lock screen coming back, switching apps -- and every
+    rebuild reloads the page, which asks for a call again. Before this, that
+    either dialed a brand-new call a few seconds after you hung up, or,
+    mid-call, left the new page connected to nothing while the old
+    connection's closing ended the call: she just went silent."""
+    if state["in_call"]:
+        if state["call_ws"] is not ws:
+            await _reattach(ws)
+        return
+    if kind == "resume":
+        # The page thinks a call is on, but it already ended here.
+        await ws.send_json({"type": "call_ended"})
+        return
+    if state["ring"] is None and time.monotonic() - state["last_call_ended_at"] < REPLAY_GUARD_SECONDS:
+        print("(ignored a call request right after hang-up -- the call screen was rebuilt)")
+        _log("(ignored a replayed call request right after hang-up)")
+        await ws.send_json({"type": "call_ended", "replay": True})
+        return
+    await _start_call(ws)
+
+
+async def _reattach(ws: WebSocket) -> None:
+    """Moves the live call onto this connection -- the newest page wins."""
+    old = state["call_ws"]
+    state["call_ws"] = ws
+    task = state["resume_task"]
+    if task is not None and not task.done():
+        task.cancel()
+    state["resume_task"] = None
+    s = settings_module.load()
+    await ws.send_json(
+        {
+            "type": "call_started",
+            "resumed": True,
+            "name": s["name"],
+            "number": _shown_number(s),
+            "has_avatar": AVATAR_PATH.exists(),
+        }
+    )
+    if not _busy():
+        await ws.send_json({"type": "state", "value": "listening"})
+    state["last_activity_at"] = time.monotonic()
+    _log("(reconnected -- same call continues)")
+    print("Phone reconnected -- call continues.")
+    if old is not None:
+        try:
+            await old.close()  # its cleanup sees it no longer holds the call
+        except Exception:
+            pass

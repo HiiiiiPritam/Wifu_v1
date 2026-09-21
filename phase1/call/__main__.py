@@ -25,7 +25,10 @@ from call import access, certs
 from call.server import PORT, app, local_lan_ip
 
 if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8")
+    # line_buffering: under systemd, output otherwise sits in a buffer and
+    # reaches the log in clumps -- fifty lines all stamped with the same
+    # second, which made the server's own timeline impossible to read.
+    sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 
 port = int(os.getenv("PORT", PORT))
 use_tls = os.getenv("CALL_TLS", "1") != "0"

@@ -223,18 +223,14 @@ class InCallActivity : AppCompatActivity() {
         findViewById<WebView>(R.id.callWebView).loadUrl("$serverUrl/?autoanswer=1$suffix")
     }
 
-    /** This activity is launchMode="singleInstance", so a second incoming
-     * call REUSES this instance and onCreate never runs again -- meaning
-     * the page was never reloaded and the old, finished call's DOM (plus
-     * its still-open mic track) was what you got. Reload explicitly. */
+    /** Reaching this screen again while it's open (e.g. tapping the "On a
+     * call" notification) just brings it back. It used to reload the page,
+     * and the reloaded page dialed a brand-new call over the live one. A
+     * finished call closes this screen (the page calls AriaCall.endCall),
+     * so a genuinely new call always gets a fresh instance via onCreate. */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
-            == PackageManager.PERMISSION_GRANTED
-        ) {
-            loadCallPage()
-        }
     }
 
     override fun onBackPressed() {
