@@ -87,6 +87,8 @@ def propose(client, v1: dict) -> list[dict]:
     for i, f in enumerate(old):
         d = by_id.get(f"n{i}") or {"action": "him", "kind": "other", "text": f.get("text"),
                                    "reason": "no decision returned -- kept as-is"}
+        if d.get("action") == "merged_into" or (d.get("action") not in LABELS and d.get("merged_into")):
+            d["action"] = "drop"  # the model sometimes writes the merge as the action itself
         if d.get("action") not in LABELS:
             d.update(action="him", kind="other", reason=f"unknown action {d.get('action')!r} -- kept as-is")
         d.update(id=f"n{i}", original=f.get("text", ""), created_at=f.get("created_at"))
