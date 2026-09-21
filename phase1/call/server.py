@@ -21,8 +21,10 @@ Run this OR the desktop companion, not both -- they share memory.json.
 """
 import asyncio
 import base64
+import difflib
 import json
 import random
+import re
 import socket
 import tempfile
 import time
@@ -69,8 +71,9 @@ NOTE_MODEL = llm.LLM_MODEL
 KEEP_CALL_LOGS = 5  # raw transcripts of the most recent calls; older ones are deleted
 # A call whose connection drops (mobile data blip, or Android rebuilding the
 # call screen) is kept alive this long for the phone to reconnect, instead
-# of ending on the spot.
-RESUME_GRACE_SECONDS = 20
+# of ending on the spot. 20s wasn't enough: a 5 AM call lost the phone's
+# network for 51s and ended just before it came back.
+RESUME_GRACE_SECONDS = 90
 # A "call her" arriving this soon after a call ended, with nothing ringing,
 # is Android replaying the call screen's launch -- not you dialing again.
 REPLAY_GUARD_SECONDS = 8
@@ -81,7 +84,8 @@ MAX_AVATAR_BYTES = 3 * 1024 * 1024
 # After an unanswered ring, the wait before the next one doubles, up to this.
 MAX_RING_BACKOFF_MINUTES = 240
 # Your "you said" transcript is thrown away as echo if at least this share
-# of its words appear in what she just said (see _looks_like_echo).
+# of its words repeat one of her recent lines word for word, in order
+# (see _looks_like_echo).
 ECHO_WORD_OVERLAP = 0.8
 
 app = FastAPI()
@@ -597,14 +601,22 @@ def _looks_like_echo(text: str) -> bool:
     the mic. The page already mutes the mic while she plays, but speaker
     output can still leak in right at the edges. Short replies ("yeah",
     "okay") are never filtered -- too likely to be you genuinely saying
-    them."""
-    words = conversation.word_set(text)
+    them.
+
+    Echo repeats her words in order, so what counts is the longest run of
+    consecutive words shared with one of her lines, not how many words are
+    shared. Answering her naturally reuses her words ("What place? I forgot
+    it." after "...the place I picked?" shares 4 of 5), and a plain
+    word-overlap check threw that away as echo."""
+    words = re.findall(r"[a-z0-9']+", text.lower())
     if len(words) < 3:
         return False
-    hers = set()
     for line in state["her_recent_speech"]:
-        hers |= conversation.word_set(line)
-    return len(words & hers) / len(words) >= ECHO_WORD_OVERLAP
+        hers = re.findall(r"[a-z0-9']+", line.lower())
+        run = difflib.SequenceMatcher(None, words, hers, autojunk=False).find_longest_match()
+        if run.size / len(words) >= ECHO_WORD_OVERLAP:
+            return True
+    return False
 
 
 # ----------------------------------------------------------- turn-taking
