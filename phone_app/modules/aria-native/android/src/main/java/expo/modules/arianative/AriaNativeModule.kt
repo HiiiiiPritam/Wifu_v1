@@ -157,13 +157,21 @@ class AriaNativeModule : Module() {
       .build()
   }
 
-  /** Returns the response body; throws with the HTTP code on failure. */
+  /** Returns the response body. On failure, throws with the server's own
+   * reason when it gave one ({"error": "..."}) -- e.g. "there's already a
+   * call scheduled at that time" -- instead of a bare HTTP code. */
   private fun executeRequest(request: Request): String {
     client.newCall(request).execute().use { response ->
+      val body = response.body?.string() ?: ""
       if (!response.isSuccessful) {
-        throw Exception("Server responded with ${response.code}")
+        val reason = try {
+          JSONObject(body).optString("error")
+        } catch (_: Exception) {
+          ""
+        }
+        throw Exception(reason.ifBlank { "Server responded with ${response.code}" })
       }
-      return response.body?.string() ?: ""
+      return body
     }
   }
 

@@ -146,6 +146,36 @@ async def main() -> None:
     check("she mentions water mid-call", bool(lines) and "water" in lines[0].lower())
     server.state.update(in_call=False, call_ws=None, history=[])
 
+    print("9) only one scheduled call per minute")
+    reset(checkin_minutes=1, quiet_windows=[])
+    schedule.add(at(60), "wake up")
+    try:
+        schedule.add(at(60), "wake up again")
+        rejected = False
+    except ValueError:
+        rejected = True
+    check("a second call in the same minute is refused", rejected)
+    schedule.add(at(70), "are you up?")
+    check("a call ten minutes later is fine", len(schedule.load()) == 2)
+
+    print("10) two calls already due at once (like the 5:00 pair) -> one call")
+    reset(checkin_minutes=1, quiet_windows=[])
+    a = schedule.add(at(60), "wake up early")
+    b = schedule.add(at(61), "she's calling to wake me up")
+    entries = schedule.load()
+    for e in entries:  # both due right now, as if set before the rule existed
+        e["at"] = e["next_try"] = at(0)
+    schedule.save(entries)
+    await server._ring_tick()
+    rings = [p for p in pushes if p["type"] == "ring"]
+    check("exactly one ring", len(rings) == 1)
+    check("it carries both reasons", bool(rings) and "wake up early" in rings[0]["args"][2]
+          and "she's calling to wake me up" in rings[0]["args"][2])
+    statuses = {e["id"]: e["status"] for e in schedule.load()}
+    check("the other one is merged, not left to ring later", sorted(statuses.values()) == ["done", "pending"])
+    server.state["ring"]["timeout"].cancel()
+    del a, b
+
     print("\nALL PASSED" if not check.failed else f"\n{check.failed} FAILED")
     del now_minute
 

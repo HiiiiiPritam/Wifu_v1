@@ -12,6 +12,8 @@ Rules (see server._ring_loop for where they're applied):
   that call instead of ringing you.
 - Unanswered: retried RETRY_MINUTES later, up to MAX_ATTEMPTS rings, then
   marked missed.
+- One call per minute. Any that still come due together (e.g. a retry
+  landing on another call's time) are merged into one call.
 """
 import json
 import uuid
@@ -58,6 +60,12 @@ def add(at: str, note: str) -> dict:
     when = parse_at(at)  # raises ValueError on a bad timestamp
     if when < datetime.now() - timedelta(minutes=1):
         raise ValueError("that time has already passed")
+    entries = load()
+    # One call per minute: two set for the same time ring back to back (or
+    # one rings and the other gets mentioned mid-call), which just feels
+    # like a glitch. due() merges any that still coincide.
+    if any(e["status"] == "pending" and e["at"] == when.strftime(FORMAT) for e in entries):
+        raise ValueError("there's already a call scheduled at that time")
     entry = {
         "id": uuid.uuid4().hex[:10],
         "at": when.strftime(FORMAT),
@@ -66,7 +74,6 @@ def add(at: str, note: str) -> dict:
         "attempts": 0,
         "next_try": when.strftime(FORMAT),
     }
-    entries = load()
     entries.append(entry)
     save(entries)
     return entry
@@ -88,11 +95,12 @@ def update(entry_id: str, **changes) -> None:
 
 
 def due(now: datetime) -> dict | None:
-    """The scheduled call that should ring now, if any. Marks long-overdue
-    entries missed on the way."""
+    """The scheduled call that should ring now, if any -- with any others
+    due at the same moment merged into it. Marks long-overdue entries
+    missed on the way."""
     entries = load()
     changed = False
-    result = None
+    ready = []
     for e in entries:
         if e["status"] != "pending":
             continue
@@ -100,11 +108,22 @@ def due(now: datetime) -> dict | None:
             e["status"] = "missed"
             changed = True
             continue
-        if parse_at(e["next_try"]) <= now and result is None:
-            result = e
+        if parse_at(e["next_try"]) <= now:
+            ready.append(e)
+    if len(ready) > 1:
+        # Several calls due at once (set before the one-per-minute rule
+        # existed, or a retry landing on another call's time): ONE call
+        # carrying all their reasons, not a ring right after a ring.
+        first, rest = ready[0], ready[1:]
+        notes = [n for n in dict.fromkeys(e["note"] for e in ready) if n]
+        first["note"] = "; ".join(notes)
+        for e in rest:
+            e["status"] = "done"
+            e["note"] = f"{e['note']} (merged into another call)".strip()
+        changed = True
     if changed:
         save(entries)
-    return result
+    return ready[0] if ready else None
 
 
 def blocks_periodic(now: datetime) -> bool:

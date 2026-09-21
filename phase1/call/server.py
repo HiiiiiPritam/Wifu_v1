@@ -33,7 +33,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
-from call import certs, conversation, phrases, push, schedule
+from call import certs, conversation, mood, phrases, push, schedule
 from call import persona
 from call import settings as settings_module
 from shared import ROOT, llm, memory, stt, tts
@@ -613,7 +613,7 @@ async def _respond(ws: WebSocket, user_text: str, s: dict, stt_ms: float) -> Non
             await asyncio.sleep(conversation.UNFINISHED_HOLD_SECONDS)
 
         if s["fillers_enabled"]:
-            filler_task = _spawn(_maybe_filler(ws, s, first_audio_sent))
+            filler_task = _spawn(_maybe_filler(ws, s, first_audio_sent, user_text))
 
         messages = conversation.build_context(
             state["history"], [{"role": "user", "content": user_text}]
@@ -686,7 +686,9 @@ async def _respond(ws: WebSocket, user_text: str, s: dict, stt_ms: float) -> Non
         state["last_activity_at"] = time.monotonic()
 
 
-async def _maybe_filler(ws: WebSocket, s: dict, reply_started: asyncio.Event) -> None:
+async def _maybe_filler(
+    ws: WebSocket, s: dict, reply_started: asyncio.Event, user_text: str
+) -> None:
     try:
         await asyncio.wait_for(reply_started.wait(), FILLER_AFTER_SECONDS)
         return  # her reply was quick enough; no filler needed
@@ -694,7 +696,11 @@ async def _maybe_filler(ws: WebSocket, s: dict, reply_started: asyncio.Event) ->
         pass
     if random.random() > FILLER_CHANCE:
         return
-    filler = phrases.pick_filler(state["last_filler"])
+    feeling = mood.classify(user_text)
+    if feeling is None:
+        return  # mixed news: no sound beats the wrong one
+    filler = phrases.pick_filler(feeling, state["last_filler"])
+    print(f"(filler: {feeling} -> {filler!r})")
     state["last_filler"] = filler
     audio = await phrases.audio_for(filler, s["voice"])
     if audio and not reply_started.is_set():

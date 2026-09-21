@@ -49,14 +49,19 @@ GREETINGS_HIM_CALLING = [
     "Oh, hey! What's up?",
 ]
 
-FILLERS = [
-    "Hmm...",
-    "Mm-hmm.",
-    "Ohh...",
-    "Hmm, okay...",
-    "Mmm...",
-    "Oh, hmm...",
-]
+# Her "thinking" sound, matched to the mood of what you said (call/mood.py)
+# -- a random pick used to land "ohh!" on sad news. Every line in a mood
+# has to fit ANY sentence that mood covers, so they stay short and
+# non-committal: "Oh no..." works for a dead dog and a missed bus alike.
+FILLERS = {
+    "excited": ["Ooh!", "Oh wow!", "Wait, really?", "Yay!"],
+    "positive": ["Oh, nice!", "Ohh!", "Mm, nice."],
+    "neutral": ["Mm-hmm.", "Mm.", "Okay..."],
+    "question": ["Hmm...", "Hmm, let me think...", "Mmm..."],
+    # Gentle on purpose: mildly negative also covers mixed news.
+    "negative": ["Oh...", "Aww...", "Hmm..."],
+    "very_negative": ["Oh no...", "Aww, babe...", "Oh, hey..."],
+}
 
 LONG_GAP_SECONDS = 2 * 24 * 3600
 RECENT_TO_AVOID = 3
@@ -83,8 +88,9 @@ def pick_greeting(she_is_calling: bool, seconds_idle: float | None, recent: list
     return _pick(GREETINGS_HER_CALLING, recent)
 
 
-def pick_filler(last: str | None) -> str:
-    return random.choice([f for f in FILLERS if f != last] or FILLERS)
+def pick_filler(mood: str, last: str | None) -> str:
+    pool = FILLERS.get(mood, FILLERS["neutral"])
+    return random.choice([f for f in pool if f != last] or pool)
 
 
 def _cache_path(text: str, voice: str):
@@ -111,7 +117,7 @@ ALL_LINES = (
     + GREETINGS_NIGHT
     + GREETINGS_LONG_GAP
     + GREETINGS_HIM_CALLING
-    + FILLERS
+    + [line for pool in FILLERS.values() for line in pool]
 )
 
 
