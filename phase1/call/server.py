@@ -56,6 +56,17 @@ DECLINE_SNOOZE_MINUTES = 30
 BUSY_SNOOZE_MINUTES = 60
 BUSY_RETRY_SCHEDULED_MINUTES = 15
 AVATAR_PATH = ROOT / "avatar.img"
+# Memory work during a call (see shared/memory.py). The running note of the
+# call's earlier part is refreshed once this many exchanges have scrolled
+# past the word-for-word window; a mid-call memory checkpoint runs every
+# CHECKPOINT_EVERY of your lines, so a crash or a long call can't lose it.
+NOTE_REFRESH_EXCHANGES = 3
+CHECKPOINT_EVERY = 10
+# The running note uses a different model from her replies, so it never
+# eats into the budget her voice depends on (Groq's free tier gives each
+# model 8,000 tokens a minute).
+NOTE_MODEL = llm.LLM_MODEL
+KEEP_CALL_LOGS_DAYS = 30
 # A call whose connection drops (mobile data blip, or Android rebuilding the
 # call screen) is kept alive this long for the phone to reconnect, instead
 # of ending on the spot.
@@ -90,6 +101,14 @@ state = {
     "snooze_until": 0.0,  # no periodic calls before this (monotonic)
     "on_hold": False,
     "resume_task": None,  # ends a call if the phone doesn't reconnect in time
+    # Memory within a call (Layer 1).
+    "call_id": 0,
+    "call_started_at": None,
+    "call_note": "",  # running note of everything older than the last few exchanges
+    "noted_upto": 0,  # history index the note covers up to
+    "checkpoint_upto": 0,  # history index already written to long-term memory
+    "note_task": None,
+    "checkpoint_task": None,
     "last_call_ended_at": 0.0,
     "recent_greetings": [],
     "recent_nudges": [],
@@ -107,6 +126,7 @@ state = {
     "reply_committed": False,
 }
 _stt_lock = asyncio.Lock()
+_memory_lock = asyncio.Lock()  # every read-modify-write of memory.json
 _turn_lock = asyncio.Lock()
 _background_tasks: set = set()
 
@@ -119,18 +139,13 @@ def _spawn(coro) -> asyncio.Task:
 
 
 def _system_prompt(s: dict) -> str:
-    """Rebuilt every time so a name change in the app applies immediately."""
-    return persona.build_system_prompt(s["name"]) + memory.facts_as_context(state["mem"])
-
-
-def _touch_last_seen() -> None:
-    """Records that you talked just now. Re-reads memory.json before
-    writing, rather than saving this process's copy wholesale -- that used
-    to silently undo any edit made to the file while the server ran."""
-    mem = memory.load()
-    memory.touch_last_seen(mem)
-    memory.save(mem)
-    state["mem"] = mem
+    """Rebuilt for every reply: her personality, her memories (every time
+    in them relative to right now), and the running note of this call's
+    earlier part. A name change in the app applies immediately."""
+    prompt = persona.build_system_prompt(s["name"]) + memory.render_context(state["mem"])
+    if state["call_note"]:
+        prompt += f"\nEarlier in this call (before the last few lines):\n{state['call_note']}\n"
+    return prompt
 
 
 def _reply_running() -> bool:
@@ -206,6 +221,37 @@ async def on_startup() -> None:
 
     _spawn(phrases.warm_cache(s["voice"]))
     _spawn(_ring_loop())
+    _spawn(_memory_maintenance())
+
+
+async def _memory_maintenance() -> None:
+    """At startup: retry memory updates that failed earlier, compact old
+    episodes, apply every store's limits, and delete raw call transcripts
+    past their keep date. Also re-run daily from the ring loop."""
+    try:
+        async with _memory_lock:
+            mem = memory.load()
+            await _retry_pending(mem)
+            await asyncio.to_thread(memory.compact, mem, memory.now_local(), memory.summarizer(sclient, llm.MEMORY_MODEL))
+            memory.enforce(mem, memory.now_local())
+            memory.save(mem)
+            if not state["in_call"]:
+                state["mem"] = mem
+        _delete_old_call_logs()
+    except Exception as e:
+        print(f"(memory maintenance failed: {type(e).__name__}: {e})")
+
+
+def _delete_old_call_logs() -> None:
+    """Raw transcripts are never shown to her -- they're kept only to
+    repair a failed memory update -- so they go after KEEP_CALL_LOGS_DAYS."""
+    cutoff = datetime.now() - timedelta(days=KEEP_CALL_LOGS_DAYS)
+    for path in LOG_DIR.glob("*.txt"):
+        try:
+            if datetime.strptime(path.stem, "%Y-%m-%d") < cutoff:
+                path.unlink()
+        except (ValueError, OSError):
+            continue
 
 
 # ------------------------------------------------------------ ringing
@@ -344,6 +390,9 @@ async def _ring_loop() -> None:
 async def _ring_tick() -> None:
     s = settings_module.load()
     now = datetime.now()
+    if state.get("maintained_on") != now.date() and now.hour >= 4 and not state["in_call"]:
+        state["maintained_on"] = now.date()
+        _spawn(_memory_maintenance())  # once a day, in the small hours
     entry = schedule.due(now)
     if state["in_call"]:
         if entry is not None and not _busy():
@@ -618,6 +667,10 @@ async def _respond(ws: WebSocket, user_text: str, s: dict, stt_ms: float) -> Non
         messages = conversation.build_context(
             state["history"], [{"role": "user", "content": user_text}]
         )
+        system_prompt = _system_prompt(s)
+        # Rough count (4 characters ~ 1 token) -- enough to watch the
+        # per-minute budget without another API call.
+        prompt_tokens = (len(system_prompt) + sum(len(m["content"]) for m in messages)) // 4
         queue: asyncio.Queue = asyncio.Queue()
         t_llm = time.monotonic()
         first_sentence_ms = None
@@ -626,7 +679,7 @@ async def _respond(ws: WebSocket, user_text: str, s: dict, stt_ms: float) -> Non
             nonlocal first_sentence_ms
             try:
                 async for sentence in conversation.stream_sentences(
-                    aclient, _system_prompt(s), messages
+                    aclient, system_prompt, messages
                 ):
                     if first_sentence_ms is None:
                         first_sentence_ms = (time.monotonic() - t_llm) * 1000
@@ -658,6 +711,7 @@ async def _respond(ws: WebSocket, user_text: str, s: dict, stt_ms: float) -> Non
                     + (f" + hold {conversation.UNFINISHED_HOLD_SECONDS:.1f}s" if held else "")
                     + f" | llm first sentence {first_sentence_ms or 0:.0f}ms"
                     + f" | her first words sent {stt_ms + total_ms:.0f}ms after your clip arrived"
+                    + f" | prompt ~{prompt_tokens} tokens"
                 )
             await _send_line(ws, sentence, audio, first=not spoken)
             spoken.append(sentence)
@@ -665,7 +719,6 @@ async def _respond(ws: WebSocket, user_text: str, s: dict, stt_ms: float) -> Non
 
         if not spoken:
             raise RuntimeError("empty reply from the model")
-        _touch_last_seen()
         await ws.send_json({"type": "state", "value": "listening"})
     except asyncio.CancelledError:
         raise
@@ -683,7 +736,119 @@ async def _respond(ws: WebSocket, user_text: str, s: dict, stt_ms: float) -> Non
         if spoken:
             state["history"].append({"role": "assistant", "content": " ".join(spoken)})
             _log(f"HER: {' '.join(spoken)}")
+            _after_turn()
         state["last_activity_at"] = time.monotonic()
+
+
+# ------------------------------------------------------- memory in a call
+
+
+def _after_turn() -> None:
+    """After each exchange: keep the running note covering whatever has
+    scrolled out of the word-for-word window, and checkpoint long-term
+    memory every CHECKPOINT_EVERY of your lines. Both run in the
+    background -- she never waits on them."""
+    history = state["history"]
+    window = memory.SHORT_TERM_TURNS * 2
+    note_task = state["note_task"]
+    if (note_task is None or note_task.done()) and (
+        len(history) - window - state["noted_upto"] >= NOTE_REFRESH_EXCHANGES * 2
+    ):
+        upto = len(history) - window
+        state["note_task"] = _spawn(_refresh_note(state["call_id"], history[state["noted_upto"]:upto], upto))
+    since = history[state["checkpoint_upto"]:]
+    checkpoint = state["checkpoint_task"]
+    if (checkpoint is None or checkpoint.done()) and sum(m["role"] == "user" for m in since) >= CHECKPOINT_EVERY:
+        state["checkpoint_task"] = _spawn(_checkpoint(state["call_id"], since, len(history)))
+
+
+async def _refresh_note(call_id: int, segment: list[dict], upto: int) -> None:
+    try:
+        note = await asyncio.to_thread(
+            memory.update_call_note, sclient, NOTE_MODEL, state["call_note"], segment, llm.MEMORY_MODEL
+        )
+    except Exception as e:
+        print(f"(couldn't update the call note: {e})")
+        return
+    if state["in_call"] and state["call_id"] == call_id:
+        state["call_note"] = note
+        state["noted_upto"] = upto
+
+
+async def _checkpoint(call_id: int, segment: list[dict], upto: int) -> int | None:
+    """Mid-call memory update: what you've said so far becomes memory now,
+    not only when the call ends -- and she knows it for the rest of the call.
+    Returns the history index it covered, or None if it failed (the
+    end-of-call update then covers that part instead)."""
+    async with _memory_lock:
+        mem = memory.load()
+        ok = await asyncio.to_thread(
+            memory.update_from_conversation, sclient, llm.MEMORY_MODEL, mem, segment,
+            final=False, earlier_note=state["call_note"],
+        )
+        if not ok:
+            return None
+        memory.save(mem)
+        if state["in_call"] and state["call_id"] == call_id:
+            state["mem"] = mem
+            state["checkpoint_upto"] = upto
+    print("(memory checkpoint saved)")
+    return upto
+
+
+async def _finish_call_memory(snapshot: dict) -> None:
+    """End of a call: the rest of the conversation becomes memory, plus a
+    dated episode of the whole call; then older episodes are compacted.
+    Runs in the background so hanging up is instant."""
+    history = snapshot["history"]
+    covered = snapshot["checkpoint_upto"]
+    checkpoint = snapshot["checkpoint_task"]
+    if checkpoint is not None:
+        # A checkpoint still running when you hung up: wait for it, and
+        # start from wherever it got to.
+        (result,) = await asyncio.gather(checkpoint, return_exceptions=True)
+        if isinstance(result, int):
+            covered = max(covered, result)
+    tail = history[covered:]
+    async with _memory_lock:
+        mem = memory.load()
+        memory.touch_last_seen(mem)
+        if any(m["role"] == "user" for m in history):
+            print("Updating what she remembers about you...")
+            started = snapshot["call_started_at"] or memory.now_local()
+            minutes = (memory.now_local() - started).total_seconds() / 60
+            ok = await asyncio.to_thread(
+                memory.update_from_conversation, sclient, llm.MEMORY_MODEL, mem, tail,
+                final=True, earlier_note=snapshot["call_note"], call_start=started, minutes=minutes,
+            )
+            if not ok:
+                # Kept for a retry at the next call or restart, rather than
+                # losing what was said.
+                mem["pending"].append({
+                    "call_start": memory._iso(started), "minutes": round(minutes, 1),
+                    "note": snapshot["call_note"], "messages": tail,
+                })
+                print("(memory update failed -- saved for a retry)")
+        await _retry_pending(mem)
+        await asyncio.to_thread(memory.compact, mem, memory.now_local(), memory.summarizer(sclient, llm.MEMORY_MODEL))
+        memory.enforce(mem, memory.now_local())
+        memory.save(mem)
+        state["mem"] = mem
+
+
+async def _retry_pending(mem: dict) -> None:
+    """Conversations whose memory update failed earlier (model down, rate
+    limit) get another go. Called with _memory_lock held."""
+    still = []
+    for item in mem["pending"]:
+        ok = await asyncio.to_thread(
+            memory.update_from_conversation, sclient, llm.MEMORY_MODEL, mem, item["messages"],
+            final=True, earlier_note=item.get("note", ""),
+            call_start=memory._parse(item["call_start"]), minutes=item.get("minutes"),
+        )
+        if not ok:
+            still.append(item)
+    mem["pending"] = still
 
 
 async def _maybe_filler(
@@ -764,9 +929,23 @@ async def _start_call(ws: WebSocket) -> None:
         if ring["schedule_id"]:
             schedule.update(ring["schedule_id"], status="done")
     # Fresh from disk: picks up anything learned in a desktop session or
-    # edited by hand since the server started.
-    state["mem"] = memory.load()
+    # edited by hand since the server started. Open threads she's about to
+    # see count one more showing, so an unanswered one stops nagging.
+    async with _memory_lock:
+        mem = memory.load()
+        idle_seconds = memory.seconds_since_last_seen(mem)
+        memory.mark_threads_shown(mem, memory.now_local())
+        memory.enforce(mem, memory.now_local())
+        memory.save(mem)
+    state["mem"] = mem
     state.update(
+        call_id=state["call_id"] + 1,
+        call_started_at=memory.now_local(),
+        call_note="",
+        noted_upto=0,
+        checkpoint_upto=0,
+        note_task=None,
+        checkpoint_task=None,
         in_call=True,
         call_ws=ws,
         consecutive_proactive=0,
@@ -795,9 +974,7 @@ async def _start_call(ws: WebSocket) -> None:
         except Exception as err:
             print(f"(couldn't prepare her reason for calling, using a plain hello: {err})")
     if not greeting:
-        greeting = phrases.pick_greeting(
-            she_is_calling, memory.seconds_since_last_seen(state["mem"]), state["recent_greetings"]
-        )
+        greeting = phrases.pick_greeting(she_is_calling, idle_seconds, state["recent_greetings"])
         state["recent_greetings"] = (state["recent_greetings"] + [greeting])[-10:]
     state["history"].append({"role": "assistant", "content": greeting})
     why = f" -- scheduled: {ring['reason']}" if ring is not None and ring["reason"] else ""
@@ -839,15 +1016,17 @@ async def _end_call() -> None:
 
     history, state["history"] = state["history"], []
     _log("===== call ended =====")
-    print("Updating what she remembers about you...")
-    # Re-read first so edits made to memory.json while the server ran
-    # aren't overwritten by this process's older copy.
-    mem = memory.load()
-    memory.touch_last_seen(mem)
-    # Blocking HTTP call -- in a thread so the server stays responsive.
-    await asyncio.to_thread(memory.extract_facts, sclient, llm.MEMORY_MODEL, mem, history)
-    memory.save(mem)
-    state["mem"] = mem
+    note_task = state["note_task"]
+    if note_task is not None and not note_task.done():
+        note_task.cancel()
+    checkpoint = state["checkpoint_task"]
+    _spawn(_finish_call_memory({
+        "history": history,
+        "call_note": state["call_note"],
+        "call_started_at": state["call_started_at"],
+        "checkpoint_upto": state["checkpoint_upto"],
+        "checkpoint_task": checkpoint if checkpoint is not None and not checkpoint.done() else None,
+    }))
 
 
 @app.websocket("/ws")

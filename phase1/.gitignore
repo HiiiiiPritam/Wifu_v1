@@ -8,6 +8,9 @@ device_token.json
 
 # Personal data -- what she knows about you, your calls, your setup
 memory.json
+memory.v1.json
+memory.cleanup*.json
+memory.tmp
 settings.json
 schedule.json
 avatar.img

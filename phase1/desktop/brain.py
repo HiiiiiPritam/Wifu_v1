@@ -156,7 +156,7 @@ def generate_proactive_opener(
 ) -> tuple[str, str]:
     """She speaks first, unprompted. Doesn't store the meta-instruction in
     history (only the reply itself), so it never leaks into what
-    memory.extract_facts sees or what future turns look back on.
+    the end-of-session memory update sees or what future turns look back on.
 
     Repetition is fought on two levels: a randomly picked "angle" (never
     the same one twice in a row) shapes the underlying instruction even

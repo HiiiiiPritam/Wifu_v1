@@ -170,7 +170,8 @@ async def main() -> None:
     vad = webrtcvad.Vad(2)  # 0-3, higher = more aggressive about filtering noise
 
     mem = memory.load()
-    system_prompt = brain.SYSTEM_PROMPT + memory.facts_as_context(mem)
+    system_prompt = brain.SYSTEM_PROMPT + memory.render_context(mem)
+    session_start = memory.now_local()
     history: list[dict] = []
     consecutive_proactive = 0
     recent_proactive_openers: list[str] = []
@@ -220,7 +221,16 @@ async def main() -> None:
         print("\nBye!")
 
     print("Updating what she remembers about you...")
-    memory.extract_facts(client, llm.MEMORY_MODEL, mem, history)
+    # Same memory as the phone calls: this session becomes an episode, and
+    # what he said becomes facts/plans/threads (see shared/memory.py).
+    mem = memory.load()  # fresh, in case a call updated it meanwhile
+    memory.touch_last_seen(mem)
+    if any(m["role"] == "user" for m in history):
+        memory.update_from_conversation(
+            client, llm.MEMORY_MODEL, mem, history, final=True, call_start=session_start
+        )
+    memory.compact(mem, memory.now_local(), memory.summarizer(client, llm.MEMORY_MODEL))
+    memory.enforce(mem, memory.now_local())
     memory.save(mem)
 
     await vts_conn.vts.close()

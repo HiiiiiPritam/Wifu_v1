@@ -92,7 +92,9 @@ async def main() -> None:
     await server._start_call(ws)
     lines = [m["text"] for m in ws.sent if m.get("value") == "speaking"]
     print(f"   she said: {lines[0] if lines else None!r}")
-    check("greeting mentions the medicine", bool(lines) and "medic" in lines[0].lower())
+    # Any natural phrasing counts -- "meds", "pills" -- not just "medicine".
+    check("greeting mentions the medicine", bool(lines) and any(
+        w in lines[0].lower() for w in ("medic", "meds", "pill", "tablet")))
     check("entry marked done", schedule.load()[0]["status"] == "done")
     for key in ("silence_watcher_task", "duration_timer_task"):
         server.state[key].cancel()
