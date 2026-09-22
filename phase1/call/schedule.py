@@ -60,16 +60,22 @@ def add(at: str, note: str) -> dict:
     when = parse_at(at)  # raises ValueError on a bad timestamp
     if when < datetime.now() - timedelta(minutes=1):
         raise ValueError("that time has already passed")
+    note = str(note or "").strip()[:200]
     entries = load()
     # One call per minute: two set for the same time ring back to back (or
     # one rings and the other gets mentioned mid-call), which just feels
-    # like a glitch. due() merges any that still coincide.
-    if any(e["status"] == "pending" and e["at"] == when.strftime(FORMAT) for e in entries):
-        raise ValueError("there's already a call scheduled at that time")
+    # like a glitch. due() merges any that still coincide. The exact same
+    # request again (a double tap on Schedule) isn't a clash -- it gets the
+    # call that's already there instead of an error saying it failed.
+    for e in entries:
+        if e["status"] == "pending" and e["at"] == when.strftime(FORMAT):
+            if e["note"] == note:
+                return e
+            raise ValueError("there's already a call scheduled at that time")
     entry = {
         "id": uuid.uuid4().hex[:10],
         "at": when.strftime(FORMAT),
-        "note": str(note or "").strip()[:200],
+        "note": note,
         "status": "pending",  # pending -> done | missed
         "attempts": 0,
         "next_try": when.strftime(FORMAT),

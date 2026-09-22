@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -615,11 +615,17 @@ function ScheduleSection(props: {
   const [time, setTime] = useState(nextRoundTime());
   const [note, setNote] = useState('');
   const [message, setMessage] = useState('');
+  // A ref, not state: a double tap fires twice before a state update would
+  // re-render, and the second request used to come back as "already a call
+  // scheduled at that time" even though the first had saved it.
+  const saving = useRef(false);
 
   const pending = props.scheduled.filter((c) => c.status === 'pending');
   const finished = props.scheduled.filter((c) => c.status !== 'pending').slice(-3).reverse();
 
   async function add() {
+    if (saving.current) return;
+    saving.current = true;
     const d = new Date();
     d.setDate(d.getDate() + dayOffset);
     const at = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${time}`;
@@ -630,6 +636,8 @@ function ScheduleSection(props: {
       await props.reload();
     } catch (err: any) {
       setMessage(`Couldn't schedule it: ${err?.message ?? err}`);
+    } finally {
+      saving.current = false;
     }
   }
 
